@@ -14,12 +14,12 @@ use parser::Parser;
 fn main() {
     let args: Vec<String> = env::args().collect();
     
-    if args.len() < 2 || args.len() > 3 {
+    if args.len() < 1 || args.len() > 2 {
         println!("Usage: {} <entry_file>", args[0]);
         process::exit(64);
     }
     
-    let entry_file = &args[2];
+    let entry_file = &args[1];
     
     match run::<str>(entry_file) {
         Ok(_) => {
