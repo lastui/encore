@@ -12,17 +12,14 @@ impl Parser {
                 self.advance();
                 Ok(Statement::Empty)
             },
-            
+
             // Block statement { ... }
             Some(TokenType::LeftBrace) => self.parse_block(),
             
             // Declaration statements
-            Some(TokenType::Var) | Some(TokenType::Let) | Some(TokenType::Const) => 
-                self.parse_variable_statement(),
-            Some(TokenType::Function) => 
-                self.parse_function_statement(),
-            Some(TokenType::Class) => 
-                self.parse_class_statement(),
+            Some(TokenType::Var) | Some(TokenType::Let) | Some(TokenType::Const) => self.parse_variable_statement(),
+            Some(TokenType::Function) =>  self.parse_function_statement(),
+            Some(TokenType::Class) =>  self.parse_class_statement(),
             
             // Control flow statements
             Some(TokenType::If) => self.parse_if(),
@@ -195,7 +192,7 @@ impl Parser {
         let test = self.parse_expression()?;
         
         self.consume(&TokenType::RightParen, "Expected ')' after while condition")?;
-        self.consume_semicolon("Expected ';' after do-while statement")?;
+        self.consume(&TokenType::Semicolon, "Expected ';' after do-while statement")?;
         
         Ok(Statement::Loop(LoopStatement::DoWhile { body, test }))
     }
@@ -247,11 +244,17 @@ impl Parser {
         
         // No line terminator allowed between throw and expression
         if self.previous_line_terminator() {
-            return Err(ParserError::new("Illegal newline after throw", token.line, token.column));
+            return Err(ParserError::with_token_span(
+                "Illegal newline after throw",
+                token.line,
+                token.column,
+                token.length,
+                &self.get_source_text(),
+            ));
         }
         
         let expr = self.parse_expression()?;
-        self.consume_semicolon("Expected ';' after throw statement")?;
+        self.consume(&TokenType::Semicolon, "Expected ';' after throw statement")?;
         
         Ok(Statement::Throw(expr))
     }
@@ -262,7 +265,13 @@ impl Parser {
         
         // Check if we're in a function
         if !self.state.in_function {
-            return Err(ParserError::new("'return' statement outside of function", token.line, token.column));
+            return Err(ParserError::with_token_span(
+                "'return' statement outside of function",
+                token.line,
+                token.column,
+                token.length,
+                &self.get_source_text(),
+            ));
         }
 
         // Return with no value if semicolon or end of block
@@ -273,7 +282,7 @@ impl Parser {
             .then(|| self.parse_expression())
             .transpose()?;
         
-        self.consume_semicolon("Expected ';' after return statement")?;
+        self.consume(&TokenType::Semicolon, "Expected ';' after return statement")?;
         
         Ok(Statement::Return(argument))
     }
@@ -284,7 +293,13 @@ impl Parser {
         
         // Check if we're in a loop or switch
         if !self.state.in_loop && !self.state.in_switch {
-            return Err(ParserError::new("'break' statement outside of loop or switch", token.line, token.column));
+            return Err(ParserError::with_token_span(
+                "'break' statement outside of loop or switch",
+                token.line,
+                token.column,
+                token.length,
+                &self.get_source_text(),
+            ));
         }
         
         // Optional label
@@ -295,7 +310,13 @@ impl Parser {
                 // Verify label exists
                 let label_name = name.into_boxed_str();
                 if !self.state.labels.contains(&label_name) {
-                    return Err(ParserError::new(&format!("Undefined label '{}'", label_name), token.line, token.column));
+                    return Err(ParserError::with_token_span(
+                        &format!("Undefined label '{}'", label_name),
+                        token.line,
+                        token.column,
+                        token.length,
+                        &self.get_source_text(),
+                    ));
                 }
                 
                 Some(label_name)
@@ -306,7 +327,7 @@ impl Parser {
             None
         };
         
-        self.consume_semicolon("Expected ';' after break statement")?;
+        self.consume(&TokenType::Semicolon, "Expected ';' after break statement")?;
         
         Ok(Statement::Break(label))
     }
@@ -317,7 +338,13 @@ impl Parser {
         
         // Check if we're in a loop
         if !self.state.in_loop {
-            return Err(ParserError::new("'continue' statement outside of loop", token.line, token.column));
+            return Err(ParserError::with_token_span(
+                "'continue' statement outside of loop",
+                token.line,
+                token.column,
+                token.length,
+                &self.get_source_text(),
+            ));
         }
         
         // Optional label
@@ -328,7 +355,13 @@ impl Parser {
                 // Verify label exists
                 let label_name = name.into_boxed_str();
                 if !self.state.labels.contains(&label_name) {
-                    return Err(ParserError::new(&format!("Undefined label '{}'", label_name), token.line, token.column));
+                    return Err(ParserError::with_token_span(
+                        &format!("Undefined label '{}'", label_name),
+                        token.line,
+                        token.column,
+                        token.length,
+                        &self.get_source_text(),
+                    ));
                 }
                 
                 Some(label_name)
@@ -339,7 +372,7 @@ impl Parser {
             None
         };
         
-        self.consume_semicolon("Expected ';' after continue statement")?;
+        self.consume(&TokenType::Semicolon, "Expected ';' after continue statement")?;
         
         Ok(Statement::Continue(label))
     }
@@ -350,10 +383,12 @@ impl Parser {
         
         // Check if in strict mode
         if self.state.in_strict_mode {
-            return Err(ParserError::new(
+            return Err(ParserError::with_token_span(
                 "'with' statements are not allowed in strict mode", 
                 self.previous().unwrap().line, 
-                self.previous().unwrap().column
+                self.previous().unwrap().column,
+                self.previous().unwrap().length,
+                &self.get_source_text(),
             ));
         }
         
@@ -372,7 +407,7 @@ impl Parser {
     fn parse_debugger(&mut self) -> ParseResult<Statement> {
         self.advance(); // consume 'debugger'
         
-        self.consume_semicolon("Expected ';' after debugger statement")?;
+        self.consume(&TokenType::Semicolon, "Expected ';' after debugger statement")?;
         
         Ok(Statement::Debugger)
     }
@@ -387,10 +422,12 @@ impl Parser {
         // Add label to the set of active labels
         let label_exists = !self.state.labels.insert(label.clone());
         if label_exists {
-            return Err(ParserError::new(
+            return Err(ParserError::with_token_span(
                 &format!("Label '{}' has already been declared", label), 
                 token.line, 
-                token.column
+                token.column,
+                token.length,
+                &self.get_source_text(),
             ));
         }
         
@@ -418,19 +455,35 @@ impl Parser {
     pub fn parse_expression_statement(&mut self) -> ParseResult<Statement> {
         // Handle directives (like "use strict")
         let start_pos = self.current;
-        
+            
+        //println!("Before parse expression");
         let expr = self.parse_expression()?;
-        
+        //println!("After parse expression");
+
+        println!("After parse expression: {:#?}", expr);
+
         // Check for directive prologue
         let is_directive = if let Expression::Literal(Literal::String(_)) = &expr {
+            //println!("This case");
             // Only consider as directive if it's at the beginning of a function/program
             // and is a simple string literal (not an expression)
             start_pos == 0 || self.previous().unwrap().token_type == TokenType::LeftBrace
         } else {
+            //println!("That case");
             false
         };
         
-        self.consume_semicolon("Expected ';' after expression")?;
+        //println!("now need a ;");
+
+
+        //if self.check(&TokenType::)
+        //if self.check(&TokenType::LeftParen) {
+            //println!("Immediately invoked?");
+        //}
+
+
+        //println!(self.peek_token_type())
+        self.consume(&TokenType::Semicolon, "Expected ';' after expression statement")?;
         
         // If this is a "use strict" directive, update parser state
         if is_directive {

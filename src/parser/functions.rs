@@ -212,96 +212,64 @@ impl Parser {
         false
     }
 
-    pub fn is_arrow_function_parameters(&mut self) -> bool {
-        // Save current position
+    pub fn is_arrow_function_parameters(&mut self) -> (bool, bool) {
         let start_pos = self.current;
         
-        // Check for a single parameter without parentheses (like y => 2)
         if let Some(TokenType::Identifier(_)) = self.peek_token_type() {
-            self.advance(); // consume identifier
+            self.advance();
             let is_arrow = self.check(&TokenType::Arrow);
             self.current = start_pos;
             if is_arrow {
-                return true;
+                return (true, false);
             }
         }
-        
-        // Check for spread operator at the beginning (like (...e) => {})
-        if self.check(&TokenType::Ellipsis) {
-            self.advance(); // consume '...'
-            
-            // We need an identifier after the spread
+
+        if self.match_token(&TokenType::Ellipsis) {
             if let Some(TokenType::Identifier(_)) = self.peek_token_type() {
-                self.advance(); // consume identifier
-                
-                // Check for right parenthesis and then arrow
+                self.advance(); 
                 if self.match_token(&TokenType::RightParen) && self.check(&TokenType::Arrow) {
                     self.current = start_pos;
-                    return true;
+                    return (true, true);
                 }
             }
-            
-            // Reset position if not an arrow function
             self.current = start_pos;
         }
-        
-        // Empty parameter list - no need to check for left parenthesis, it's already consumed
+
         if self.match_token(&TokenType::RightParen) {
-            // Check for arrow
             let is_arrow = self.check(&TokenType::Arrow);
             self.current = start_pos;
-            return is_arrow;
+            return (is_arrow, true);
         }
         
-        // Try to parse a parameter list
-        let mut has_rest = false;
-        
-        loop {
-            if has_rest {
-                // Rest parameter must be the last one
-                self.current = start_pos;
-                return false;
-            }
-            
-            if self.match_token(&TokenType::Ellipsis) {
-                has_rest = true;
-                
-                // We need an identifier after the spread
-                if !matches!(self.peek_token_type(), Some(TokenType::Identifier(_))) {
-                    self.current = start_pos;
-                    return false;
-                }
-            }
-            
-            // Skip the parameter
-            if let Some(token_type) = self.peek_token_type() {
-                if matches!(token_type, TokenType::Identifier(_)) ||
-                token_type == &TokenType::LeftBrace ||
-                token_type == &TokenType::LeftBracket {
-                    self.advance();
-                } else {
-                    self.current = start_pos;
-                    return false;
-                }
-            } else {
-                self.current = start_pos;
-                return false;
-            }
+        let mut has_close_paren = false;
 
-            if self.match_token(&TokenType::RightParen) {
-                break;
+        loop {
+            match self.parse_pattern() {
+                Ok(arg) => {
+                    continue;
+                },
+                Err(_) if self.match_token(&TokenType::Comma) => {
+                    continue;
+                },
+                Err(_) => if self.match_token(&TokenType::RightParen) {
+                    has_close_paren = true;
+                    break;
+                },
+                Err(_) => {
+                    self.current = start_pos;
+                    return (false, has_close_paren)
+                },
             }
-            
-            if !self.match_token(&TokenType::Comma) {
-                self.current = start_pos;
-                return false;
-            }
+            break;
         }
-        
-        // Check for arrow
+
+        if self.match_token(&TokenType::RightParen) {
+            has_close_paren = true;
+        }
+
         let is_arrow = self.check(&TokenType::Arrow);
         self.current = start_pos;
-        is_arrow
+        return (is_arrow, has_close_paren)
     }
 
 }

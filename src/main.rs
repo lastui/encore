@@ -42,6 +42,7 @@ fn run<T: ?Sized>(file: &str) -> Result<(), Box<dyn std::error::Error>> where st
     let tokens = lexer.scan_tokens()?;
     
     let mut parser = Parser::new(tokens);
+    parser.attach_source(&source);
     let ast = parser.parse()?;
     
     println!("AST: {:#?}", ast);

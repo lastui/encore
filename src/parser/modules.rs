@@ -101,7 +101,7 @@ impl Parser {
             Vec::new()
         };
         
-        self.consume_semicolon("Expected ';' after import statement")?;
+        self.consume(&TokenType::Semicolon, "Expected ';' after import statement")?;
         
         if let Some(src) = source {
             Ok(Statement::Import {
@@ -237,10 +237,12 @@ impl Parser {
         }
         
         // If we get here, it's an invalid export statement
-        Err(super::error::ParserError::new(
+        Err(super::error::ParserError::with_token_span(
             "Invalid export statement. Expected '*', default, declaration, or named exports",
             start_token.line,
-            start_token.column
+            start_token.column,
+            start_token.length,
+            &self.get_source_text()
         ))
     }
 
@@ -253,21 +255,25 @@ impl Parser {
         };
         
         if !self.match_token(&TokenType::From) {
-            return Err(super::error::ParserError::new(
+            return Err(super::error::ParserError::with_token_span(
                 "Expected 'from' after export *",
                 self.peek_token().unwrap().line,
-                self.peek_token().unwrap().column
+                self.peek_token().unwrap().column,
+                self.peek_token().unwrap().length,
+                &self.get_source_text()
             ));
         }
         
         let source = self.parse_module_source()?
-            .ok_or_else(|| super::error::ParserError::new(
+            .ok_or_else(|| super::error::ParserError::with_token_span(
                 "Expected string literal for module source",
                 self.previous().unwrap().line,
-                self.previous().unwrap().column
+                self.previous().unwrap().column,
+                self.previous().unwrap().length,
+                &self.get_source_text()
             ))?;
 
-        self.consume_semicolon("Expected ';' after export statement")?;
+        self.consume(&TokenType::Semicolon, "Expected ';' after export statement")?;
         
         Ok(Statement::Export(ExportDeclaration::All { source, exported }))
     }
@@ -287,7 +293,7 @@ impl Parser {
         } else {
             // export default expression;
             let expr = self.parse_expression()?;
-            self.consume_semicolon("Expected ';' after export default expression")?;
+            self.consume(&TokenType::Semicolon, "Expected ';' after export default expression")?;
             ExportDefaultDeclaration::Expression(expr)
         };
         
@@ -305,10 +311,12 @@ impl Parser {
         } else if self.check(&TokenType::Var) || self.check(&TokenType::Let) || self.check(&TokenType::Const) {
             Declaration::Variable(self.parse_variable_declaration()?)
         } else {
-            return Err(super::error::ParserError::new(
+            return Err(super::error::ParserError::with_token_span(
                 "Expected declaration in export statement",
                 self.peek_token().unwrap().line,
-                self.peek_token().unwrap().column
+                self.peek_token().unwrap().column,
+                self.peek_token().unwrap().length,
+                &self.get_source_text()
             ));
         };
         
@@ -325,16 +333,18 @@ impl Parser {
         
         // Optional from clause
         let source = if self.match_token(&TokenType::From) {
-            Some(self.parse_module_source()?.ok_or_else(|| super::error::ParserError::new(
+            Some(self.parse_module_source()?.ok_or_else(|| super::error::ParserError::with_token_span(
                 "Expected string literal for module source",
                 self.previous().unwrap().line,
-                self.previous().unwrap().column
+                self.previous().unwrap().column,
+                self.previous().unwrap().length,
+                &self.get_source_text()
             ))?)
         } else {
             None
         };
         
-        self.consume_semicolon("Expected ';' after export statement")?;
+        self.consume(&TokenType::Semicolon, "Expected ';' after export statement")?;
         
         Ok(Statement::Export(ExportDeclaration::Named {
             declaration: None,

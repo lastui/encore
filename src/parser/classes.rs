@@ -119,8 +119,8 @@ impl Parser {
         let value = self.match_token(&TokenType::Equal)
             .then(|| self.parse_expression())
             .transpose()?;
-        
-        self.consume_semicolon("Expected ';' after class field")?;
+
+        self.consume(&TokenType::Semicolon, "Expected ';' after class field")?;
         
         Ok(ClassMember::Property {
             key,
