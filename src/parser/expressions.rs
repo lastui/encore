@@ -30,6 +30,33 @@ pub enum Precedence {
 impl Parser {
 
     pub fn parse_expression(&mut self) -> ParseResult<Expression> {
+
+//        match self.parse_expression_with_precedence(Precedence::Comma) {
+//            Ok(expr) => {
+//
+//                match expr {
+//                    Expression::ArrowFunction { params: _, body: _, is_async: _ } if self.check(&TokenType::RightParen) => {
+//                        self.advance();
+//                        //println!("Parsed Arrow Function!!!");
+//                    },
+//                    _ => {},
+//                };
+//
+//                println!("Parsed expression: {:#?}", expr);
+//                Ok(expr)
+//            },
+//            err => err
+//        }
+
+        //let expr =;
+
+        //if 
+        //if let Expression::ArrowFunction = &expr {
+          //  println!("Consumed arrow function");
+        //}
+
+        //expr
+
         self.parse_expression_with_precedence(Precedence::Comma)
     }
 
@@ -158,6 +185,7 @@ impl Parser {
                 if let TokenType::TemplateLiteral(parts) = self.advance().unwrap().token_type.clone() {
                     let token_line = self.previous().unwrap().line;
                     let token_column = self.previous().unwrap().column;
+                    let token_length = self.previous().unwrap().length;
                     
                     let mut quasis = Vec::new();
                     let mut expressions = Vec::new();
@@ -184,19 +212,23 @@ impl Parser {
                                         match temp_parser.parse_expression() {
                                             Ok(expr) => expressions.push(expr),
                                             Err(e) => {
-                                                return Err(super::error::ParserError::new(
+                                                return Err(super::error::ParserError::with_token_span(
                                                     &format!("Invalid expression in template literal: {}", e.message),
                                                     token_line,
-                                                    token_column
+                                                    token_column,
+                                                    token_length,
+                                                    &self.get_source_text()
                                                 ));
                                             }
                                         }
                                     },
                                     Err(e) => {
-                                        return Err(super::error::ParserError::new(
+                                        return Err(super::error::ParserError::with_token_span(
                                             &format!("Error tokenizing expression in template literal: {}", e.message),
                                             token_line,
-                                            token_column
+                                            token_column,
+                                            token_length,
+                                            &self.get_source_text()
                                         ));
                                     }
                                 }
@@ -215,14 +247,16 @@ impl Parser {
                         if quasis.len() == expressions.len() {
                             quasis.push("".into());
                         } else {
-                            return Err(super::error::ParserError::new(
+                            return Err(super::error::ParserError::with_token_span(
                                 &format!(
                                     "Invalid template literal: expected {} quasis but got {}", 
                                     expressions.len() + 1, 
-                                    quasis.len()
+                                    quasis.len(),
                                 ),
                                 token_line,
-                                token_column
+                                token_column,
+                                token_length,
+                                &self.get_source_text()
                             ));
                         }
                     }
@@ -249,45 +283,133 @@ impl Parser {
                 Expression::Identifier(name)
             },
             Some(TokenType::LeftParen) => {
+
+                // TODO tricky tricky
+
                 self.advance(); // consume '('
 
-                let start_pos = self.current;
-                let is_arrow = self.is_arrow_function_parameters();
+                println!("In (");
 
-                if is_arrow {
-                    self.current = start_pos;
-                    let params = if self.check(&TokenType::RightParen) {
-                        self.advance();
-                        vec![]
-                    } else {
-                        let mut params = vec![];
-                        loop {
-                            if self.match_token(&TokenType::Ellipsis) {
-                                let arg = self.parse_pattern()?;
-                                params.push(Pattern::RestElement(Box::new(arg)));
-                                break;
-                            } else {
-                                params.push(self.parse_pattern()?);
-                            }
-                            if !self.match_token(&TokenType::Comma) {
-                                break;
-                            }
-                            if self.match_token(&TokenType::RightParen) {
-                                break;
-                            }
+                match self.parse_expression() {
+                    Ok(expr) => {
+                        println!("Parsed expr {:#?}", expr);
+                        println!("Current token {:#?}", self.peek_token_type());
+                        self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
+                        return Ok(expr);
+                    },
+                    Err(err) => {
+                        println!("Now I go here");
+                        let mut consumed_paren = false;
+                        let start_pos = self.current;
+
+                        
+
+                        //println!("Before check is arrow");
+
+                        let (is_arrow, arrow_consumed_right_paren) = self.is_arrow_function_parameters();
+
+                        //println!("After check is arrow");
+
+                        if !is_arrow {
+                            println!("Not arrow at all");
+                            return Err(err);
                         }
-                        self.consume(&TokenType::RightParen, "Expected ')' after parameters")?;
-                        params
-                    };
 
-                    self.consume(&TokenType::Arrow, "Expected '=>' after parameters")?;
-                    let body = self.parse_arrow_function_body(params, false)?;
-                    return Ok(body);
-                }  else {
-                    let expr = self.parse_expression()?;
-                    self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
-                    expr
+                        //println!("In Arrow Function");
+
+                        //println!("At token {:#?}", self.peek_token_type());
+
+                        self.current = start_pos;
+
+                        let params = if self.match_token(&TokenType::RightParen) {
+                            vec![]
+                        } else {
+                            let mut params = vec![];
+                            loop {
+                                if self.match_token(&TokenType::Ellipsis) {
+                                    //println!("found ... in parameters");
+                                    let arg = self.parse_pattern()?;
+                                    params.push(Pattern::RestElement(Box::new(arg)));
+                                    self.advance();
+                                    break;
+                                }
+
+                                if self.match_token(&TokenType::RightParen) {
+                                    //self.advance();
+                                    break;
+                                }
+
+                                //println!("found identifier in parameters");
+                                params.push(self.parse_pattern()?);
+
+    //                            if self.match_token(&TokenType::RightParen) {
+    //                                println!("found ) in parameters");
+    //                                //consumed_paren = true;
+    //                                //self.advance();
+    //                                break;
+    //                            }
+
+                                if !self.match_token(&TokenType::Comma) {
+                                    if self.match_token(&TokenType::RightParen) {
+                                        break;
+                                    }
+                              //      println!("Not comma bailing");
+                                    break;
+                                    
+                                }
+
+
+                                //println!("At end of parameters");
+                                
+                            }
+
+                            //println!("Am here");
+                            //self.consume(&TokenType::RightParen, "Expected ')' after parameters")?;
+                            //println!("Am there");
+                            params
+                        };
+
+                        self.consume(&TokenType::Arrow, "Expected '=>' after parameters")?;
+
+                        //println!("Currently before parsing body {:#?}", self.peek_token_type());
+                        let body = self.parse_arrow_function_body(params, false)?;
+                        //println!("Currently after parsing body {:#?}", self.peek_token_type());
+
+                        //if !arrow_consumed_right_paren && self.check(&TokenType::RightParen) {
+                          //  self.advance();
+                        //}
+
+                        //println!("Currently before closing ) {:#?}", self.peek_token_type());
+
+//                            if self.match_token(&TokenType::LeftParen) {
+//                                let arguments = self.parse_arguments()?;
+//                                body = Expression::Call {
+//                                    callee: Box::new(body),
+//                                    arguments,
+//                                    optional: false,
+//                                };
+//                            }
+
+
+                        //println!("Currently immedietaly invoked {:#?}", self.peek_token_type());
+
+                        //self.consume(&TokenType::RightParen, "Expected ')' after parameters")?;
+                        //let params = if self.check(&TokenType::RightParen) {}
+                        // TODO ) not consumed
+
+                        //println!("Here all done for (");
+                        //                    if self.check(&TokenType::RightParen) {
+                        //                        self.advance();
+                        //                        println!("Consuming dangling )");
+                        //                    }
+                        return Ok(body);
+                        
+
+                    },
                 }
+
+                //println!("At expr {:#?}", expr);
+
             },
             Some(TokenType::LeftBracket) => {
                 self.advance(); // consume '['
@@ -487,11 +609,23 @@ impl Parser {
                             }
                         } else {
                             let token = self.peek_token().unwrap();
-                            return Err(super::error::ParserError::new("Expected 'target' after 'new.'", token.line, token.column));
+                            return Err(super::error::ParserError::with_token_span(
+                                "Expected 'target' after 'new.'",
+                                token.line,
+                                token.column,
+                                token.length,
+                                &self.get_source_text(),
+                            ));
                         }
                     } else {
                         let token = self.peek_token().unwrap();
-                        return Err(super::error::ParserError::new("Expected 'target' after 'new.'", token.line, token.column));
+                        return Err(super::error::ParserError::with_token_span(
+                            "Expected 'target' after 'new.'",
+                            token.line,
+                            token.column,
+                            token.length,
+                            &self.get_source_text(),
+                        ));
                     }
                 } else {
                     // Regular new expression
@@ -552,10 +686,12 @@ impl Parser {
             Some(TokenType::Async) if self.is_async_function() => self.parse_async_function_expression()?,
             _ => {
                 let token = self.peek_token().unwrap_or_else(|| self.previous().unwrap());
-                return Err(super::error::ParserError::new(
+                return Err(super::error::ParserError::with_token_span(
                     &format!("Unexpected token in expression: {:?}", token.token_type),
                     token.line,
-                    token.column
+                    token.column,
+                    token.length,
+                    &self.get_source_text()
                 ));
             }
         };
@@ -630,10 +766,12 @@ impl Parser {
                 if self.match_any(&[TokenType::PlusPlus, TokenType::MinusMinus]) {
                     if !matches!(expr, Expression::Identifier(_) | Expression::Member { .. }) {
                         let token = self.previous().unwrap();
-                        return Err(super::error::ParserError::new(
+                        return Err(super::error::ParserError::with_token_span(
                             "Invalid left-hand side in postfix operation", 
                             token.line, 
-                            token.column
+                            token.column,
+                            token.length,
+                            &self.get_source_text()
                         ));
                     }
                     
@@ -701,10 +839,12 @@ impl Parser {
                     if !matches!(expr, Expression::Identifier(_) | Expression::Member { .. } | Expression::Array(_) | Expression::Object(_)) {
                         let binding = Token::new(TokenType::EOF, 0, 0, 0);
                         let token = self.previous().unwrap_or(&binding);
-                        return Err(super::error::ParserError::new(
+                        return Err(super::error::ParserError::with_token_span(
                             "Invalid left-hand side in assignment", 
                             token.line, 
-                            token.column
+                            token.column,
+                            token.length,
+                            &self.get_source_text()
                         ));
                     }
                     
@@ -826,10 +966,12 @@ impl Parser {
                         TokenType::InstanceOf => BinaryOperator::InstanceOf,
                         _ => {
                             let token = self.previous().unwrap();
-                            return Err(super::error::ParserError::new(
+                            return Err(super::error::ParserError::with_token_span(
                                 &format!("Unexpected token: {:?}", token_type),
                                 token.line,
-                                token.column
+                                token.column,
+                                token.length,
+                                &self.get_source_text()
                             ));
                         }
                     };
@@ -892,10 +1034,12 @@ impl Parser {
                             self.advance();
                             "for".into()
                         } else {
-                            return Err(super::error::ParserError::new(
+                            return Err(super::error::ParserError::with_token_span(
                                 "Expected property name 3",
                                 self.peek_token().unwrap().line,
-                                self.peek_token().unwrap().column
+                                self.peek_token().unwrap().column,
+                                self.peek_token().unwrap().length,
+                                &self.get_source_text()
                             ));
                         };
                         

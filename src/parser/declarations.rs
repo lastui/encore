@@ -26,7 +26,7 @@ impl Parser {
 
         // Consume semicolon unless we're in a for-in/of loop
         if !self.state.in_loop {
-            self.consume_semicolon("Expected ';' after variable declaration")?;
+            self.consume(&TokenType::Semicolon, "Expected ';' after variable declaration")?;
         }
         
         Ok(VariableDeclaration { declarations, kind })
