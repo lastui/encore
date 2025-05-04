@@ -98,7 +98,7 @@ impl Parser {
         })
     }
 
-    pub fn parse_function_params(&mut self) -> ParseResult<Vec<Pattern>> {
+    pub fn parse_function_params(&mut self) -> ParseResult<Vec<Expression>> {
         self.consume(&TokenType::LeftParen, "Expected '(' after function name")?;
         
         let mut params = Vec::new();
@@ -108,7 +108,7 @@ impl Parser {
                 if self.match_token(&TokenType::Ellipsis) {
                     // Rest parameter
                     let arg = self.parse_pattern()?;
-                    params.push(Pattern::RestElement(Box::new(arg)));
+                    params.push(Expression::Spread(Box::new(arg)));
                     break; // Rest parameter must be the last one
                 } else {
                     params.push(self.parse_pattern()?);
@@ -144,7 +144,7 @@ impl Parser {
         Ok(body)
     }
 
-    pub fn parse_arrow_function_body(&mut self, params: Vec<Pattern>, is_async: bool) -> ParseResult<Expression> {
+    pub fn parse_arrow_function_body(&mut self, params: Vec<Expression>, is_async: bool) -> ParseResult<Expression> {
         // Save and update parser state
         let (prev_in_function, prev_allow_await) = (self.state.in_function, self.state.allow_await);
         self.state.in_function = true;

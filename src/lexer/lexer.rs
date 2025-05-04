@@ -38,7 +38,7 @@ impl<'a> Lexer<'a> {
             self.start = self.current;
             self.scan_token()?;
         }
-        let eof_column = self.column;
+        let _eof_column = self.column;
         add_token!(self, TokenType::EOF, 0);
         Ok(std::mem::take(&mut self.tokens))
     }

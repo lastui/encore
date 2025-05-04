@@ -267,16 +267,16 @@ impl Parser {
                 }
             },
             // TODO everything but Identifier hoists matches below, need a better approach to var as = e.class; scenarios
-            Some(TokenType::Identifier(_)) | 
-            Some(TokenType::As) | 
-            Some(TokenType::Target) | 
-            Some(TokenType::Class) | 
-            Some(TokenType::Get) | 
-            Some(TokenType::Set) | 
-            Some(TokenType::From) => {
+            Some(TokenType::Identifier(_)) => {
+            //Some(TokenType::As) | 
+            //Some(TokenType::Target) | 
+            //Some(TokenType::Class) | 
+            //Some(TokenType::Get) | 
+            //Some(TokenType::Set) | 
+            //Some(TokenType::From) => {
                 let name = self.expect_identifier("Expected identifier in expression")?;
                 if self.check(&TokenType::Arrow) {
-                    let param = Pattern::Identifier(name);
+                    let param = Expression::Identifier(name);
                     self.advance();
                     return self.parse_arrow_function_body(vec![param], false);
                 }
@@ -290,96 +290,7 @@ impl Parser {
 
                 println!("In (");
 
-                match self.parse_expression() {
-                    Ok(expr) => {
-                        println!("Parsed expr {:#?}", expr);
-                        println!("Current token {:#?}", self.peek_token_type());
-                        self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
-                        return Ok(expr);
-                    },
-                    Err(err) => {
-                        println!("Now I go here");
-                        let mut consumed_paren = false;
-                        let start_pos = self.current;
-
-                        
-
-                        //println!("Before check is arrow");
-
-                        let (is_arrow, arrow_consumed_right_paren) = self.is_arrow_function_parameters();
-
-                        //println!("After check is arrow");
-
-                        if !is_arrow {
-                            println!("Not arrow at all");
-                            return Err(err);
-                        }
-
-                        //println!("In Arrow Function");
-
-                        //println!("At token {:#?}", self.peek_token_type());
-
-                        self.current = start_pos;
-
-                        let params = if self.match_token(&TokenType::RightParen) {
-                            vec![]
-                        } else {
-                            let mut params = vec![];
-                            loop {
-                                if self.match_token(&TokenType::Ellipsis) {
-                                    //println!("found ... in parameters");
-                                    let arg = self.parse_pattern()?;
-                                    params.push(Pattern::RestElement(Box::new(arg)));
-                                    self.advance();
-                                    break;
-                                }
-
-                                if self.match_token(&TokenType::RightParen) {
-                                    //self.advance();
-                                    break;
-                                }
-
-                                //println!("found identifier in parameters");
-                                params.push(self.parse_pattern()?);
-
-    //                            if self.match_token(&TokenType::RightParen) {
-    //                                println!("found ) in parameters");
-    //                                //consumed_paren = true;
-    //                                //self.advance();
-    //                                break;
-    //                            }
-
-                                if !self.match_token(&TokenType::Comma) {
-                                    if self.match_token(&TokenType::RightParen) {
-                                        break;
-                                    }
-                              //      println!("Not comma bailing");
-                                    break;
-                                    
-                                }
-
-
-                                //println!("At end of parameters");
-                                
-                            }
-
-                            //println!("Am here");
-                            //self.consume(&TokenType::RightParen, "Expected ')' after parameters")?;
-                            //println!("Am there");
-                            params
-                        };
-
-                        self.consume(&TokenType::Arrow, "Expected '=>' after parameters")?;
-
-                        //println!("Currently before parsing body {:#?}", self.peek_token_type());
-                        let body = self.parse_arrow_function_body(params, false)?;
-                        //println!("Currently after parsing body {:#?}", self.peek_token_type());
-
-                        //if !arrow_consumed_right_paren && self.check(&TokenType::RightParen) {
-                          //  self.advance();
-                        //}
-
-                        //println!("Currently before closing ) {:#?}", self.peek_token_type());
+                // TODO IIFE
 
 //                            if self.match_token(&TokenType::LeftParen) {
 //                                let arguments = self.parse_arguments()?;
@@ -389,87 +300,136 @@ impl Parser {
 //                                    optional: false,
 //                                };
 //                            }
+    
 
 
-                        //println!("Currently immedietaly invoked {:#?}", self.peek_token_type());
-
-                        //self.consume(&TokenType::RightParen, "Expected ')' after parameters")?;
-                        //let params = if self.check(&TokenType::RightParen) {}
-                        // TODO ) not consumed
-
-                        //println!("Here all done for (");
-                        //                    if self.check(&TokenType::RightParen) {
-                        //                        self.advance();
-                        //                        println!("Consuming dangling )");
-                        //                    }
-                        return Ok(body);
+                match self.parse_expression() {
+                    Ok(expr) => {
+                        println!("Parsed expr {:#?}", expr);
+                        //println!("Current token {:#?}", self.peek_token_type());
                         
+                        match expr {
+                            Expression::ArrowFunction { .. } => {
+                                self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
+                                return Ok(expr);
+                            }
+                            _ => {},
+                        }
 
-                    },
-                }
+                        let mut params = vec![];
 
-                //println!("At expr {:#?}", expr);
+                        // TODO better way to extract Expressions into Patterns
 
-            },
-            Some(TokenType::LeftBracket) => {
-                self.advance(); // consume '['
-                
-                let mut elements = Vec::new();
-                
-                while !self.check(&TokenType::RightBracket) && !self.is_at_end() {
-                    if self.match_token(&TokenType::Comma) {
-                        // Elision (hole)
-                        elements.push(None);
-                    } else {
-                        if self.match_token(&TokenType::Ellipsis) {
-                            // Spread element
-                            let expr = self.parse_expression_with_precedence(Precedence::Assignment)?;
-                            elements.push(Some(ArrayElement::Spread(expr)));
-                        } else {
-                            // Regular element
-                            let expr = self.parse_expression_with_precedence(Precedence::Assignment)?;
-                            elements.push(Some(ArrayElement::Expression(expr)));
+                        match expr {
+                            // TODO sequences are tuples or maybe just keep it as is?
+                            Expression::Sequence(ref seq) => {
+                                println!("Found sequence of identifiers {:#?}", seq);
+                                for item in seq {
+                                    match item {
+                                        Expression::Identifier(ref name) => {
+                                            params.push(Expression::Identifier(name.clone()));
+                                        },
+                                        _ => {},    // TODO rest
+                                    }
+                                }
+                            },
+                            Expression::Identifier(ref name) => {
+                                println!("Found identifier {:#?}", name);
+                                params.push(Expression::Identifier(name.clone()));
+                            },
+                            /*
+                            Expression::ArrowFunction { .. } => {
+                                self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
+                                return Ok(expr);
+                            }
+                            */
+                            _ => {},
+                        }
+
+                        if self.match_token(&TokenType::Arrow) {
+                            println!("Now I am in body of arrow function");
+
+                            let body = self.parse_arrow_function_body(params, false)?;
+
+                            self.consume(&TokenType::RightParen, "Expected ')' after expression")?;        
+                            return Ok(body);
                         }
                         
+                        //println!("Not in body of arrow function just generic expression");
+
+                        self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
+
+                        if self.match_token(&TokenType::Arrow) {
+
+                            println!("Acumulated params {:#?}", params);
+
+                            println!("Backtrack it was actually arrow function");
+
+                            let body = self.parse_arrow_function_body(params, false)?;
+                            return Ok(body);
+                        }   
+                        return Ok(expr);
+                    },
+                    Err(err) => {
+                        println!("In error");
+                        
+                        self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
+
+                        println!("Current token {:#?}", self.peek_token_type());
+
+                        if self.match_token(&TokenType::Arrow) {
+                            println!("Now I am in body of arrow function");
+
+                            // TODO skipped over params
+                            let params = vec![];
+                            let body = self.parse_arrow_function_body(params, false)?;
+                            return Ok(body);
+                        }
+
+                        return Err(err);
+                    },
+                }
+            },
+            Some(TokenType::LeftBracket) => {
+                self.advance();
+                let mut elements = Vec::new();
+                while !self.check(&TokenType::RightBracket) && !self.is_at_end() {
+                    if self.match_token(&TokenType::Comma) {
+                        elements.push(ArrayElement::Hole);
+                    } else {
+                        if self.match_token(&TokenType::Ellipsis) {
+                            let expr = self.parse_expression_with_precedence(Precedence::Assignment)?;
+                            elements.push(ArrayElement::Spread(expr));
+                        } else {
+                            let expr = self.parse_expression_with_precedence(Precedence::Assignment)?;
+                            elements.push(ArrayElement::Expression(expr));
+                        }
                         if !self.check(&TokenType::RightBracket) {
                             self.consume(&TokenType::Comma, "Expected ',' after array element")?;
                         }
                     }
                 }
-                
                 self.consume(&TokenType::RightBracket, "Expected ']' after array elements")?;
-                
                 Expression::Array(elements)
             },
             Some(TokenType::LeftBrace) => {
-                self.advance(); // consume '{'
-                
+                self.advance();
                 let mut properties = Vec::new();
-                
                 while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
                     if self.match_token(&TokenType::Ellipsis) {
-                        // Spread property
                         let expr = self.parse_expression_with_precedence(Precedence::Assignment)?;
                         properties.push(ObjectProperty::Spread(expr));
                     } else {
-                        // Method or property
-                        let start_pos = self.current;
                         let is_async = self.match_token(&TokenType::Async);
                         let is_generator = self.match_token(&TokenType::Star);
-                        
-                        // Check for getter/setter
                         let mut kind = PropertyKind::Init;
                         if !is_async && !is_generator {
-                            // Check if the next token is 'get' or 'set'
                             if self.check(&TokenType::Get) || self.check(&TokenType::Set) {
-                                // Look ahead to see if it's followed by a colon
                                 let is_property_name = if let Some(next_token) = self.tokens.get(self.current + 1) {
                                     matches!(next_token.token_type, TokenType::Colon)
                                 } else {
                                     false
                                 };
-                                
-                                // Only treat as getter/setter if not followed by a colon
                                 if !is_property_name {
                                     if self.match_token(&TokenType::Get) {
                                         kind = PropertyKind::Get;
@@ -795,6 +755,7 @@ impl Parser {
                 Precedence::Comma => {
                     self.advance(); // consume comma
                     let right = self.parse_expression_with_precedence(Precedence::Assignment)?;
+                    // TODO if None or Empty its fine
                     expr = Expression::Sequence(vec![expr, right]);
                 },
                 Precedence::Assignment => {

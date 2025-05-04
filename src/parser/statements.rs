@@ -226,7 +226,9 @@ impl Parser {
         // Optional catch parameter
         let param = self.match_token(&TokenType::LeftParen)
             .then(|| {
-                let param = self.parse_pattern()?;
+                //let param = self.parse_pattern()?;
+                // TODO fixme
+                let param = None;
                 self.consume(&TokenType::RightParen, "Expected ')' after catch parameter")?;
                 // Explicitly specify the error type as ParserError
                 Ok::<_, super::error::ParserError>(param)
@@ -235,7 +237,7 @@ impl Parser {
         
         let body = Box::new(self.parse_block()?);
         
-        Ok(CatchClause { param, body })
+        Ok(CatchClause { param: param.expect("REASON"), body })
     }
 
     /// Parse throw statement: throw expression;
@@ -458,7 +460,6 @@ impl Parser {
             
         //println!("Before parse expression");
         let expr = self.parse_expression()?;
-        //println!("After parse expression");
 
         println!("After parse expression: {:#?}", expr);
 

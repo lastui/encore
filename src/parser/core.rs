@@ -345,11 +345,11 @@ impl Parser {
     }
 
     // Helper method to validate function parameters
-    pub fn validate_function_params(&self, params: &[Pattern]) -> ParseResult<()> {
+    pub fn validate_function_params(&self, params: &[Expression]) -> ParseResult<()> {
         let mut seen_params = HashSet::new();
         
         for param in params {
-            if let Pattern::Identifier(name) = param {
+            if let Expression::Identifier(name) = param {
                 if self.state.in_strict_mode && (name.as_ref() == "eval" || name.as_ref() == "arguments") {
                     return Err(super::error::ParserError::with_token_span(
                         &format!("'{}' cannot be used as a parameter name in strict mode", name),

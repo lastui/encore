@@ -104,7 +104,7 @@ pub struct VariableDeclaration {
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration {
     pub id: Box<str>,
-    pub params: Vec<Pattern>,
+    pub params: Vec<Expression>,
     pub body: Vec<Statement>,
     pub is_async: bool,
     pub is_generator: bool,
@@ -120,7 +120,7 @@ pub struct ClassDeclaration {
 #[derive(Debug, Clone)]
 pub enum ClassMember {
     Constructor {
-        params: Vec<Pattern>,
+        params: Vec<Expression>,
         body: Vec<Statement>,
     },
     Method {
@@ -141,7 +141,7 @@ pub enum ClassMember {
 
 #[derive(Debug, Clone)]
 pub struct MethodDefinition {
-    pub params: Vec<Pattern>,
+    pub params: Vec<Expression>,
     pub body: Vec<Statement>,
     pub is_async: bool,
     pub is_generator: bool,
@@ -199,36 +199,40 @@ pub enum VariableKind {
 
 #[derive(Debug, Clone)]
 pub struct VariableDeclarator {
-    pub id: Pattern,
+    pub id: Expression, // TODO maybe tighter
     pub init: Option<Expression>,
 }
 
-#[derive(Debug, Clone)]
-pub enum Pattern {
-    Identifier(Box<str>),
-    ObjectPattern(Vec<ObjectPatternProperty>),
-    ArrayPattern(Vec<Option<Pattern>>),
-    RestElement(Box<Pattern>),
-    AssignmentPattern {
-        left: Box<Pattern>,
-        right: Expression,
-    },
-}
+//
+//// TODO delete
+//#[derive(Debug, Clone)]
+//pub enum Pattern {
+    //Identifier(Box<str>),
+    //ObjectPattern(Vec<ObjectPatternProperty>),
+    //ArrayPattern(Vec<Option<Pattern>>),
+    //RestElement(Box<Pattern>),
+    //AssignmentPattern {
+        //left: Box<Pattern>,
+        //right: Expression,
+    //},
+//}
 
+/*
 #[derive(Debug, Clone)]
 pub enum ObjectPatternProperty {
     Property {
         key: PropertyKey,
-        value: Pattern,
+        value: Expression,
         computed: bool,
         shorthand: bool,
     },
-    Rest(Box<Pattern>),
-}
+    Spread(Box<Expression>),
+    //Rest(Box<Pattern>),
+}*/
 
 #[derive(Debug, Clone)]
 pub struct CatchClause {
-    pub param: Option<Pattern>,
+    pub param: Option<Expression>,
     pub body: Box<Statement>,
 }
 
@@ -266,17 +270,17 @@ pub enum Expression {
     This,
     Super,
     Literal(Literal),
-    Array(Vec<Option<ArrayElement>>),
+    Array(Vec<ArrayElement>),
     Object(Vec<ObjectProperty>),
     Function {
         id: Option<Box<str>>,
-        params: Vec<Pattern>,
+        params: Vec<Expression>,
         body: Vec<Statement>,
         is_async: bool,
         is_generator: bool,
     },
     ArrowFunction {
-        params: Vec<Pattern>,
+        params: Vec<Expression>,
         body: ArrowFunctionBody,
         is_async: bool,
     },
