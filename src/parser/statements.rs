@@ -461,7 +461,7 @@ impl Parser {
         //println!("Before parse expression");
         let expr = self.parse_expression()?;
 
-        println!("After parse expression: {:#?}", expr);
+        //println!("After parse expression: {:#?}", expr);
 
         // Check for directive prologue
         let is_directive = if let Expression::Literal(Literal::String(_)) = &expr {
@@ -607,7 +607,7 @@ impl Parser {
             let token = self.advance().unwrap().clone();
             let name = self.identifier_name(&token)?;
             let left = Expression::Identifier(name);
-            
+
             // Check what follows the identifier
             if self.check(&TokenType::In) {
                 // for-in loop with identifier

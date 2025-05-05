@@ -11,16 +11,7 @@ pub struct ParserError {
 }
 
 impl ParserError {
-    pub fn new(message: &str, line: usize, column: usize) -> Self {
-        ParserError {
-            message: message.to_string(),
-            line,
-            column,
-            source_line: None,
-            source_span: None,
-        }
-    }
-        
+  
     pub fn with_token_span(message: &str, line: usize, column: usize, token_length: usize, source: &str) -> Self {
         // Extract just the relevant line with limited context
         let source_line = extract_source_line_with_context(source, line, column, 60);

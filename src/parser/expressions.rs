@@ -24,7 +24,7 @@ pub enum Precedence {
     Prefix,          // ! ~ + - ++ -- typeof void delete
     Postfix,         // ++ --
     Call,            // . [] ()
-    Primary
+    //Primary
 }
 
 impl Parser {
@@ -288,7 +288,7 @@ impl Parser {
 
                 self.advance(); // consume '('
 
-                println!("In (");
+                //println!("In (");
 
                 // TODO IIFE
 
@@ -305,7 +305,7 @@ impl Parser {
 
                 match self.parse_expression() {
                     Ok(expr) => {
-                        println!("Parsed expr {:#?}", expr);
+                        //println!("Parsed expr {:#?}", expr);
                         //println!("Current token {:#?}", self.peek_token_type());
                         
                         match expr {
