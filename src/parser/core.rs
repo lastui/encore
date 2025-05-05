@@ -1,5 +1,7 @@
+use super::prelude::*;
+
 use crate::ast::*;
-use crate::lexer::{Token, TokenType};
+use crate::lexer::{Token, TokenType, LexicalContext};
 use super::error::{ParserError, ParseResult};
 use super::state::ParserState;
 use std::collections::HashSet;
@@ -11,6 +13,8 @@ pub struct Parser {
     pub comments: Vec<Comment>,
     pub state: ParserState,
     pub source: Option<String>,
+
+    context_stack: Vec<LexicalContext>,
 }
 
 impl Parser {
@@ -22,9 +26,119 @@ impl Parser {
             comments: Vec::new(),
             state: ParserState::new(),
             source: None,
+            context_stack: vec![LexicalContext::Default],
         }
     }
 
+    // Add methods to manage the context stack
+    pub fn push_context(&mut self, context: LexicalContext) {
+        self.context_stack.push(context);
+    }
+    
+    pub fn pop_context(&mut self) -> Option<LexicalContext> {
+        if self.context_stack.len() > 1 {
+            self.context_stack.pop()
+        } else {
+            None
+        }
+    }
+
+    pub fn current_context(&self) -> LexicalContext {
+        *self.context_stack.last().unwrap_or(&LexicalContext::Default)
+    }
+
+    pub fn get_context_stack_info(&self) -> Vec<String> {
+        // Get up to the last 6 entries from the context stack
+        let stack_len = self.context_stack.len();
+        let start_idx = if stack_len > 6 { stack_len - 6 } else { 0 };
+
+        self.context_stack[start_idx..]
+            .iter()
+            .rev()
+            .map(|ctx| format!("{}", ctx))
+            .collect()
+    }
+
+    pub fn with_context<F, R>(&mut self, context: LexicalContext, f: F) -> ParseResult<R>
+    where
+        F: FnOnce(&mut Self) -> ParseResult<R>,
+    {
+        let current_pos = self.current;
+        
+        // Only process tokens if the context has any keywords that can be identifiers
+        if context.has_keywords_as_identifiers() {
+            for token in self.tokens.iter_mut().skip(current_pos) {
+                // Work directly with the token type without extracting text first
+                if context.allows_token_as_identifier(&token.token_type) {
+                    // Get the keyword text only when we know we need to convert it
+                    if let Some(text) = token.token_type.keyword_text() {
+                        token.token_type = TokenType::Identifier(text.to_string());
+                    }
+                }
+            }
+        }
+        
+        self.push_context(context);
+        let result = f(self);
+        self.pop_context();
+        result
+    }
+
+    /*
+    pub fn with_context<F, R>(&mut self, context: LexicalContext, f: F) -> ParseResult<R>
+    where
+        F: FnOnce(&mut Self) -> ParseResult<R>,
+    {
+        let current_pos = self.current;
+        for token in self.tokens.iter_mut().skip(current_pos) {
+            // TODO might be improved to not need keyword_text invocation and do checks on tokens dirrectly
+            if let Some(text) = token.token_type.keyword_text() {
+                if context.allows_keyword_as_identifier(text) {
+                    token.token_type = TokenType::Identifier(text.to_string());
+                }
+            }
+        }
+        self.push_context(context);
+        let result = f(self);
+        self.pop_context();
+        result
+    }
+    */
+
+    // Helper methods to check contexts
+    pub fn is_in_loop(&self) -> bool {
+        self.context_stack.iter().any(|ctx| matches!(ctx, LexicalContext::LoopBody))
+    }
+    
+    pub fn is_in_switch(&self) -> bool {
+        self.context_stack.iter().any(|ctx| matches!(ctx, LexicalContext::SwitchBody))
+    }
+    
+    pub fn is_in_function(&self) -> bool {
+        self.context_stack.iter().any(|ctx| matches!(ctx, LexicalContext::FunctionBody { .. }))
+    }
+    
+    pub fn allows_yield(&self) -> bool {
+        if let Some(LexicalContext::FunctionBody { allow_yield, .. }) = self.context_stack.iter()
+            .rev()
+            .find(|ctx| matches!(ctx, LexicalContext::FunctionBody { .. }))
+        {
+            *allow_yield
+        } else {
+            false
+        }
+    }
+    
+    pub fn allows_await(&self) -> bool {
+        if let Some(LexicalContext::FunctionBody { allow_await, .. }) = self.context_stack.iter()
+            .rev()
+            .find(|ctx| matches!(ctx, LexicalContext::FunctionBody { .. }))
+        {
+            *allow_await
+        } else {
+            false
+        }
+    }
 
     // Method to attach source code to an existing parser
     pub fn attach_source(&mut self, source: &str) {
@@ -91,23 +205,7 @@ impl Parser {
         }
 
         if token_type == &TokenType::Semicolon {
-            if self.match_token(&TokenType::Semicolon) {
-                return Ok(self.previous().unwrap().clone());
-            }
-
-            // ASI rules: insert semicolon if
-            // 1. The current token is on a new line from the previous token
-            // 2. The current token is a closing brace
-            // 3. We've reached the end of input
-            if self.previous_line_terminator() || 
-               self.check(&TokenType::RightBrace) || 
-               self.is_at_end() {
-                if let Some(prev) = self.previous() {
-                    return Ok(prev.clone());
-                } else {
-                    return DUMMY_TOKEN.with(|token| Ok(token.clone()));
-                }
-            }
+            return self.consume_semicolon(message);
         } else if self.check(token_type) {
             return Ok(self.advance().unwrap().clone());
         }
@@ -118,23 +216,11 @@ impl Parser {
             t
         } else {
             return DUMMY_TOKEN.with(|token| {
-                Err(ParserError::with_token_span(
-                    message,
-                    token.line,
-                    token.column,
-                    token.length,
-                    &self.get_source_text()
-                ))
+                Err(parser_error_at_current!(self, message))
             });
         };
             
-        Err(ParserError::with_token_span(
-            message,
-            token.line,
-            token.column,
-            token.length,
-            &self.get_source_text()
-        ))
+        Err(parser_error_at_current!(self, message))
     }
 
     pub fn previous_line_terminator(&self) -> bool {
@@ -146,76 +232,13 @@ impl Parser {
         false
     }
 
-    // TODO delete
-    pub fn identifier_name(&self, token: &Token) -> ParseResult<Box<str>> {
-        match &token.token_type {
-            TokenType::Identifier(name) => Ok(name.clone().into_boxed_str()),
-            _ => Err(ParserError::with_token_span(
-                "Expected identifier",
-                token.line,
-                token.column,
-                token.length,
-                &self.get_source_text()
-            )),
-        }
-    }
-
     pub fn expect_identifier(&mut self, message: &str) -> ParseResult<Box<str>> {
-        // Create a binding for the error case
-        let binding = Token::new(TokenType::EOF, 0, 0, 0);
-        
-        // Get the token, handling the case where there might not be one
-        let token = match self.advance() {
-            Some(t) => t,
-            None => {
-                let last = self.previous().unwrap_or(&binding);
-                return Err(ParserError::with_token_span(
-                    message,
-                    last.line,
-                    last.column,
-                    last.length,
-                    &self.get_source_text()
-                ));
-            }
-        };
-
-        match &token.token_type {
-            TokenType::Identifier(name) => Ok(name.clone().into_boxed_str()),
-            TokenType::Default => Ok("default".into()),
-            TokenType::As => Ok("as".into()),
-            TokenType::For => Ok("for".into()),
-            TokenType::Target => Ok("target".into()),
-            TokenType::From => Ok("from".into()),
-            TokenType::Class => Ok("class".into()),
-            TokenType::Get => Ok("get".into()),
-            TokenType::Set => Ok("set".into()),
-            _ => Err(ParserError::with_token_span(
-                &format!("Expected identifier, found {:?}", token.token_type),
-                token.line,
-                token.column,
-                token.length,
-                &self.get_source_text()
-            )),
+        if let Some(TokenType::Identifier(name)) = self.peek_token_type().cloned() {
+            self.advance();
+            Ok(name.into_boxed_str())
+        } else {            
+            Err(parser_error_at_current_mut!(self, "Expected identifier"))
         }
-    }
-
-    // Error helper
-    pub fn error_unexpected(&self, message: &str) -> ParserError {
-        let binding = Token::new(TokenType::EOF, 0, 0, 0);
-        let token = match self.peek_token() {
-            Some(t) => t,
-            None => match self.previous() {
-                Some(t) => t,
-                None => &binding
-            }
-        };
-        ParserError::with_token_span(
-            message, 
-            token.line, 
-            token.column,
-            token.length,
-            &self.get_source_text()
-        )
     }
 
     pub fn get_source_text(&self) -> String {
@@ -257,13 +280,7 @@ impl Parser {
         // Ensure we've consumed all tokens
         if !self.is_at_end() && !matches!(self.peek_token_type(), Some(TokenType::EOF)) {
             let token = self.peek_token().unwrap();
-            return Err(ParserError::with_token_span(
-                "Unexpected token after statement",
-                token.line,
-                token.column,
-                token.length,
-                &self.get_source_text()
-            ));
+            return Err(parser_error_at_current!(self, "Unexpected token after statement"));
         }
         
         Ok(stmt)
@@ -271,13 +288,7 @@ impl Parser {
 
     pub fn parse_single_expression(&mut self) -> ParseResult<Expression> {
         if self.tokens.is_empty() {
-            return Err(ParserError::with_token_span(
-                "Empty input",
-                0,
-                0,
-                0,
-                &self.get_source_text()
-            ));
+            return Err(parser_error_at_current!(self, "Empty input"));
         }
 
         let expr = self.parse_expression()?;
@@ -285,13 +296,7 @@ impl Parser {
         // Ensure we've consumed all tokens
         if !self.is_at_end() && !matches!(self.peek_token_type(), Some(TokenType::EOF)) {
             let token = self.peek_token().unwrap();
-            return Err(ParserError::with_token_span(
-                "Unexpected token after expression",
-                token.line,
-                token.column,
-                token.length,
-                &self.get_source_text(),
-            ));
+            return Err(parser_error_at_current!(self, "Unexpected token after expression"));
         }
         
         Ok(expr)
@@ -306,6 +311,7 @@ impl Parser {
         self.comments.push(comment);
     }
 
+    // TODO delete
     // Helper method to handle parsing of "enum" keyword which is reserved in strict mode
     pub fn handle_reserved_word(&self, word: &str) -> ParseResult<()> {
         if self.state.in_strict_mode {
@@ -313,13 +319,7 @@ impl Parser {
             
             if reserved_words.contains(&word) {
                 let token = self.previous().unwrap();
-                return Err(super::error::ParserError::with_token_span(
-                    &format!("'{}' is a reserved word in strict mode", word),
-                    token.line,
-                    token.column,
-                    token.length,
-                    &self.get_source_text(),
-                ));
+                return Err(parser_error_at_current!(self, "'{}' is a reserved word in strict mode", word));
             }
         }
         
@@ -331,13 +331,7 @@ impl Parser {
         if self.state.in_strict_mode {
             if name == "eval" || name == "arguments" {
                 let token = self.previous().unwrap();
-                return Err(super::error::ParserError::with_token_span(
-                    &format!("'{}' cannot be used as a variable name in strict mode", name),
-                    token.line,
-                    token.column,
-                    token.length,
-                    &self.get_source_text(),
-                ));
+                return Err(parser_error_at_current!(self, "'{}' cannot be used as a variable name in strict mode", name));
             }
         }
         
@@ -351,23 +345,11 @@ impl Parser {
         for param in params {
             if let Expression::Identifier(name) = param {
                 if self.state.in_strict_mode && (name.as_ref() == "eval" || name.as_ref() == "arguments") {
-                    return Err(super::error::ParserError::with_token_span(
-                        &format!("'{}' cannot be used as a parameter name in strict mode", name),
-                        self.previous().unwrap().line,
-                        self.previous().unwrap().column,
-                        self.previous().unwrap().length,
-                        &self.get_source_text(),
-                    ));
+                    return Err(parser_error_at_previous!(self, "'{}' cannot be used as a parameter name in strict mode", name));
                 }
                 
                 if !seen_params.insert(name.clone()) {
-                    return Err(super::error::ParserError::with_token_span(
-                        &format!("Duplicate parameter name '{}'", name),
-                        self.previous().unwrap().line,
-                        self.previous().unwrap().column,
-                        self.previous().unwrap().length,
-                        &self.get_source_text(),
-                    ));
+                    return Err(parser_error_at_previous!(self, "Duplicate parameter name '{}'", name));
                 }
             }
         }
@@ -378,13 +360,7 @@ impl Parser {
     // Helper method to handle octal literals in strict mode
     pub fn validate_octal_literal(&self, value: &str) -> ParseResult<()> {
         if self.state.in_strict_mode && value.starts_with('0') && !value.starts_with("0x") && !value.starts_with("0b") && !value.starts_with("0o") {
-            return Err(super::error::ParserError::with_token_span(
-                "Octal literals are not allowed in strict mode",
-                self.previous().unwrap().line,
-                self.previous().unwrap().column,
-                self.previous().unwrap().length,
-                &self.get_source_text(),
-            ));
+            return Err(parser_error_at_previous!(self, "Octal literals are not allowed in strict mode"));
         }
         
         Ok(())
@@ -469,15 +445,8 @@ impl Parser {
             } else {
                 unreachable!()
             }
-        } else if self.check(&TokenType::Default) {
-            Ok(PropertyKey::Identifier("default".into()))
-        } else if self.check(&TokenType::Get) {
-            Ok(PropertyKey::Identifier("get".into()))
-        }
-        else if self.check(&TokenType::Set) {
-            Ok(PropertyKey::Identifier("set".into()))
         } else {
-            let name = self.expect_identifier("Expected property name 999")?;
+            let name = self.expect_identifier("Expected property name 0")?;
             Ok(PropertyKey::Identifier(name))
         }
     }

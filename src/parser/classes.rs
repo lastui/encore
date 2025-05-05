@@ -1,5 +1,8 @@
+use super::prelude::*;
+
+
 use crate::ast::*;
-use crate::lexer::TokenType;
+use crate::lexer::{TokenType, LexicalContext};
 use super::error::ParseResult;
 use super::core::Parser;
 use super::expressions::Precedence;
@@ -84,14 +87,20 @@ impl Parser {
         }
         
         // Parse property key
-        let key = self.parse_property_key()?;
+        let key = self.with_context(LexicalContext::PropertyKey, |parser| {
+            parser.parse_property_key()
+        })?;
         
         // Check for constructor method
         if !is_static && !is_async && !is_generator && kind == MethodKind::Method {
             if let PropertyKey::Identifier(name) = &key {
                 if name.as_ref() == "constructor" {
                     let params = self.parse_function_params()?;
+                    
+                    self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
                     let body = self.parse_function_body(false, false)?;
+                    self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
+
                     return Ok(ClassMember::Constructor { params, body });
                 }
             }
@@ -100,7 +109,10 @@ impl Parser {
         // Method definition
         if self.check(&TokenType::LeftParen) || is_generator || is_async {
             let params = self.parse_function_params()?;
+
+            self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
             let body = self.parse_function_body(is_async, is_generator)?;
+            self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
             
             return Ok(ClassMember::Method {
                 key,

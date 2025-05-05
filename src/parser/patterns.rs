@@ -1,5 +1,8 @@
+use super::prelude::*;
+
+
 use crate::ast::*;
-use crate::lexer::TokenType;
+use crate::lexer::{TokenType, LexicalContext};
 use super::error::ParseResult;
 use super::core::Parser;
 
@@ -8,10 +11,7 @@ impl Parser {
     pub fn parse_pattern(&mut self) -> ParseResult<Expression> {
         match self.peek_token_type() {
             // Identifier pattern
-            Some(TokenType::Identifier(_)) | 
-            Some(TokenType::Default) | 
-            Some(TokenType::As) | 
-            Some(TokenType::From) => {
+            Some(TokenType::Identifier(_)) => {
                 let name = self.expect_identifier("Expected identifier in pattern")?;
                 Ok(Expression::Identifier(name))
             },
@@ -30,12 +30,14 @@ impl Parser {
                             
                             // Rest element must be the last one
                             if !self.check(&TokenType::RightBrace) {
-                                return Err(self.error_unexpected("Rest element must be the last element in object pattern"));
+                                return Err(parser_error_at_current!(self, "Rest element must be the last element in object pattern"));
                             }
                             break;
                         } else {
                             // Regular property
-                            let key = self.parse_property_key()?;
+                            let key = self.with_context(LexicalContext::PropertyKey, |parser| {
+                                parser.parse_property_key()
+                            })?;
                             
                             // Handle shorthand: { x }
                             let (value, computed, shorthand) = if !self.check(&TokenType::Colon) {
@@ -55,7 +57,7 @@ impl Parser {
                                         (pattern, false, true)
                                     }
                                 } else {
-                                    return Err(self.error_unexpected("Invalid shorthand property in object pattern"));
+                                    return Err(parser_error_at_current!(self, "Invalid shorthand property in object pattern"));
                                 }
                             } else {
                                 // Full syntax: { key: value }
@@ -120,10 +122,10 @@ impl Parser {
                             if !self.check(&TokenType::RightBracket) {
                                 if self.match_token(&TokenType::Comma) {
                                     if !self.check(&TokenType::RightBracket) {
-                                        return Err(self.error_unexpected("Rest element must be the last element in array pattern"));
+                                        return Err(parser_error_at_current!(self, "Rest element must be the last element in array pattern"));
                                     }
                                 } else {
-                                    return Err(self.error_unexpected("Expected ',' or ']' after rest element in array pattern"));
+                                    return Err(parser_error_at_current!(self, "Expected ',' or ']' after rest element in array pattern"));
                                 }
                             }
                             break;
@@ -158,7 +160,7 @@ impl Parser {
             // Assignment pattern: x = 1 (handled by the caller)
             
             _ => {
-                Err(self.error_unexpected("Expected pattern"))
+                Err(parser_error_at_current!(self, "Expected pattern"))
             }
         }
     }

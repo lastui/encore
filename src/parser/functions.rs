@@ -1,5 +1,7 @@
+use super::prelude::*;
+
 use crate::ast::*;
-use crate::lexer::TokenType;
+use crate::lexer::{TokenType, LexicalContext};
 use super::error::ParseResult;
 use super::core::Parser;
 
@@ -11,17 +13,11 @@ impl Parser {
         let is_generator = self.match_token(&TokenType::Star);
         let id = self.expect_identifier("Expected function name")?;
         
-        // Save and update parser state
-        let (prev_in_function, prev_allow_yield) = (self.state.in_function, self.state.allow_yield);
-        self.state.in_function = true;
-        self.state.allow_yield = is_generator;
-        
         let params = self.parse_function_params()?;
-        let body = self.parse_function_body(false, is_generator)?;
         
-        // Restore previous state
-        self.state.in_function = prev_in_function;
-        self.state.allow_yield = prev_allow_yield;
+        self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
+        let body = self.parse_function_body(is_generator, false)?;
+        self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
         
         Ok(FunctionDeclaration {
             id,
@@ -38,21 +34,17 @@ impl Parser {
         let is_generator = self.match_token(&TokenType::Star);
         
         // Optional function name for function expressions
-        let id = matches!(self.peek_token_type(), Some(TokenType::Identifier(_)))
-            .then(|| self.expect_identifier("Expected function name"))
-            .transpose()?;
-        
-        // Save and update parser state
-        let (prev_in_function, prev_allow_yield) = (self.state.in_function, self.state.allow_yield);
-        self.state.in_function = true;
-        self.state.allow_yield = is_generator;
+        let id = if matches!(self.peek_token_type(), Some(TokenType::Identifier(_))) {
+            Some(self.expect_identifier("Expected function name")?)
+        } else {
+            None
+        };
         
         let params = self.parse_function_params()?;
-        let body = self.parse_function_body(false, is_generator)?;
-        
-        // Restore previous state
-        self.state.in_function = prev_in_function;
-        self.state.allow_yield = prev_allow_yield;
+
+        self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
+        let body = self.parse_function_body(is_generator, false)?;
+        self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
         
         Ok(Expression::Function {
             id,
@@ -68,26 +60,19 @@ impl Parser {
         self.advance(); // consume 'function'
         
         let is_generator = self.match_token(&TokenType::Star);
-        
+
         // Optional function name for function expressions
-        let id = matches!(self.peek_token_type(), Some(TokenType::Identifier(_)))
-            .then(|| self.expect_identifier("Expected function name"))
-            .transpose()?;
-        
-        // Save and update parser state
-        let (prev_in_function, prev_allow_yield, prev_allow_await) = 
-            (self.state.in_function, self.state.allow_yield, self.state.allow_await);
-        self.state.in_function = true;
-        self.state.allow_yield = is_generator;
-        self.state.allow_await = true;
+        let id = if matches!(self.peek_token_type(), Some(TokenType::Identifier(_))) {
+            Some(self.expect_identifier("Expected function name")?)
+        } else {
+            None
+        };
         
         let params = self.parse_function_params()?;
-        let body = self.parse_function_body(true, is_generator)?;
-        
-        // Restore previous state
-        self.state.in_function = prev_in_function;
-        self.state.allow_yield = prev_allow_yield;
-        self.state.allow_await = prev_allow_await;
+
+        self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
+        let body = self.parse_function_body(is_generator, true)?;
+        self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
         
         Ok(Expression::Function {
             id,
@@ -98,72 +83,28 @@ impl Parser {
         })
     }
 
-    pub fn parse_function_params(&mut self) -> ParseResult<Vec<Expression>> {
-        self.consume(&TokenType::LeftParen, "Expected '(' after function name")?;
-        
-        let mut params = Vec::new();
-        
-        if !self.check(&TokenType::RightParen) {
-            loop {
-                if self.match_token(&TokenType::Ellipsis) {
-                    // Rest parameter
-                    let arg = self.parse_pattern()?;
-                    params.push(Expression::Spread(Box::new(arg)));
-                    break; // Rest parameter must be the last one
-                } else {
-                    params.push(self.parse_pattern()?);
-                }
-                
-                if !self.match_token(&TokenType::Comma) {
-                    break;
-                }
-                
-                // Handle trailing comma
-                if self.check(&TokenType::RightParen) {
-                    break;
-                }
-            }
-        }
-        
-        self.consume(&TokenType::RightParen, "Expected ')' after function parameters")?;
-        
-        Ok(params)
-    }
-
-    pub fn parse_function_body(&mut self, _is_async: bool, _is_generator: bool) -> ParseResult<Vec<Statement>> {
-        self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
-        
-        let mut body = Vec::new();
-        
-        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
-            body.push(self.parse_statement()?);
-        }
-        
-        self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
-        
-        Ok(body)
-    }
-
     pub fn parse_arrow_function_body(&mut self, params: Vec<Expression>, is_async: bool) -> ParseResult<Expression> {
-        // Save and update parser state
-        let (prev_in_function, prev_allow_await) = (self.state.in_function, self.state.allow_await);
-        self.state.in_function = true;
-        self.state.allow_await = is_async;
-        
+        // Create a new function body context with appropriate yield/await flags
+
         let body = if self.check(&TokenType::LeftBrace) {
             // Block body
-            let statements = self.parse_function_body(is_async, false)?;
-            ArrowFunctionBody::Block(statements)
+
+            let body = self.parse_function_body(false, is_async)?;
+
+            ArrowFunctionBody::Block(body)
         } else {
             // Expression body
-            let expr = self.parse_expression()?;
-            ArrowFunctionBody::Expression(Box::new(expr))
+            let function_body_context = LexicalContext::FunctionBody { 
+                allow_yield: false, 
+                allow_await: is_async 
+            };
+
+            self.with_context(function_body_context, |parser| {
+                let expr = parser.parse_expression()?;
+                Ok(ArrowFunctionBody::Expression(Box::new(expr)))
+            })?
         };
-        
-        // Restore previous state
-        self.state.in_function = prev_in_function;
-        self.state.allow_await = prev_allow_await;
-        
+
         Ok(Expression::ArrowFunction {
             params,
             body,
@@ -178,20 +119,11 @@ impl Parser {
         let is_generator = self.match_token(&TokenType::Star);
         let id = self.expect_identifier("Expected function name")?;
         
-        // Save and update parser state
-        let (prev_in_function, prev_allow_yield, prev_allow_await) = 
-            (self.state.in_function, self.state.allow_yield, self.state.allow_await);
-        self.state.in_function = true;
-        self.state.allow_yield = is_generator;
-        self.state.allow_await = true;
-        
         let params = self.parse_function_params()?;
-        let body = self.parse_function_body(true, is_generator)?;
-        
-        // Restore previous state
-        self.state.in_function = prev_in_function;
-        self.state.allow_yield = prev_allow_yield;
-        self.state.allow_await = prev_allow_await;
+
+        self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
+        let body = self.parse_function_body(is_generator, true)?;
+        self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
         
         Ok(FunctionDeclaration {
             id,
@@ -199,6 +131,54 @@ impl Parser {
             body,
             is_async: true,
             is_generator,
+        })
+    }
+
+    pub fn parse_function_params(&mut self) -> ParseResult<Vec<Expression>> {
+        self.consume(&TokenType::LeftParen, "Expected '(' after function name")?;
+    
+        // Create parameter name context with current strict mode
+        let param_context = LexicalContext::ParameterName { 
+            strict_mode: self.state.in_strict_mode 
+        };
+
+        self.with_context(param_context, |parser| {
+            let mut params = Vec::new();
+            
+            if !parser.check(&TokenType::RightParen) {
+                loop {
+                    if parser.match_token(&TokenType::Ellipsis) {
+                        // Rest parameter
+                        let arg = parser.parse_pattern()?;
+                        params.push(Expression::Spread(Box::new(arg)));
+                        break; // Rest parameter must be the last one
+                    } else {
+                        params.push(parser.parse_pattern()?);
+                    }
+                    if !parser.match_token(&TokenType::Comma) {
+                        break;
+                    }
+                    // Handle trailing comma
+                    if parser.check(&TokenType::RightParen) {
+                        break;
+                    }
+                }
+            }
+            
+            parser.consume(&TokenType::RightParen, "Expected ')' after function parameters")?;
+            
+            Ok(params)
+        })
+    }
+
+    pub fn parse_function_body(&mut self, is_async: bool, is_generator: bool) -> ParseResult<Vec<Statement>> {
+        let function_body_context = LexicalContext::FunctionBody { allow_yield: is_generator, allow_await: is_async };
+        self.with_context(function_body_context, |parser| {
+            let mut body = Vec::new();
+            while !parser.check(&TokenType::RightBrace) && !parser.is_at_end() {
+                body.push(parser.parse_statement()?);
+            }
+            Ok(body)
         })
     }
 
@@ -211,5 +191,4 @@ impl Parser {
         }
         false
     }
-
 }

@@ -1,4 +1,5 @@
-use crate::lexer::LexerError;
+use crate::lexer::{LexerError, Token};
+use super::core::Parser;
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -8,29 +9,109 @@ pub struct ParserError {
     pub column: usize,
     pub source_line: Option<String>,
     pub source_span: Option<(usize, usize)>,
+    pub context_stack: Vec<String>,
+    pub current_token: Option<Token>,
 }
 
 impl ParserError {
-  
-    pub fn with_token_span(message: &str, line: usize, column: usize, token_length: usize, source: &str) -> Self {
-        // Extract just the relevant line with limited context
-        let source_line = extract_source_line_with_context(source, line, column, 60);
-        let span_end = column + token_length;
+
+    pub fn new(message: &str, line: usize, column: usize) -> Self {
+        ParserError {
+            message: message.to_string(),
+            line,
+            column,
+            source_line: None,
+            source_span: None,
+            context_stack: Vec::new(),
+            current_token: None,
+        }
+    }
+    
+    /// Create a parser error from a parser reference and token information
+    pub fn from_parser(parser: &Parser, message: &str, line: usize, column: usize, token_length: usize) -> Self {
+        let source = parser.get_source_text();
         
-        // Adjust column if we've added ellipsis at the start
+        let source_line = extract_source_line_with_context(&source, line, column, 60);
+        let span_end = column + token_length;
+
         let (adjusted_column, adjusted_span_end) = if source_line.starts_with("...") {
-            (column.min(60) + 3, span_end.min(60) + 3)
+            let adjusted_col = column.min(60) + 3;
+            let adjusted_end = adjusted_col + token_length;
+            (adjusted_col, adjusted_end)
         } else {
             (column, span_end)
         };
-        
+
+        let context_stack = parser.get_context_stack_info();
+            
+        let current_token = parser.peek_token().cloned();
+
         ParserError {
             message: message.to_string(),
             line,
             column,
             source_line: Some(source_line),
             source_span: Some((adjusted_column, adjusted_span_end)),
+            context_stack,
+            current_token,
         }
+    }
+    
+    /// Create a parser error from the current token with an immutable reference
+    pub fn at_current(parser: &Parser, message: &str) -> Self {
+        if let Some(token) = parser.peek_token() {
+            Self::from_parser(
+                parser,
+                message,
+                token.line,
+                token.column,
+                token.length
+            )
+        } else if let Some(token) = parser.previous() {
+            Self::from_parser(
+                parser,
+                message,
+                token.line,
+                token.column,
+                token.length
+            )
+        } else {
+            Self::new(message, 0, 0)
+        }
+    }
+    
+    /// Create a parser error from the current token with a mutable reference
+    pub fn at_current_mut(parser: &mut Parser, message: &str) -> Self {
+        Self::at_current(&*parser, message)
+    }
+    
+    /// Create a parser error from the previous token with an immutable reference
+    pub fn at_previous(parser: &Parser, message: &str) -> Self {
+        if let Some(token) = parser.previous() {
+            Self::from_parser(
+                parser,
+                message,
+                token.line,
+                token.column,
+                token.length
+            )
+        } else if let Some(token) = parser.peek_token() {
+            Self::from_parser(
+                parser,
+                message,
+                token.line,
+                token.column,
+                token.length
+            )
+        } else {
+            // Fallback if no token is available
+            Self::new(message, 0, 0)
+        }
+    }
+    
+    /// Create a parser error from the previous token with a mutable reference
+    pub fn at_previous_mut(parser: &mut Parser, message: &str) -> Self {
+        Self::at_previous(&*parser, message)
     }
 
 }
@@ -59,14 +140,47 @@ impl fmt::Display for ParserError {
                 write!(f, " ")?;
             }
             
+            // Calculate how many carets to print (limited by the actual line length)
+            let visible_end = if let Some(line) = &self.source_line {
+                end.min(start + line.len() - start.min(line.len()))
+            } else {
+                end
+            };
+            
             // Print carets for the span length
-            for _ in start..end.max(start+1) {
+            for _ in start..visible_end.max(start+1) {
                 write!(f, "^")?;
             }
             
             writeln!(f)?;
+            
+            // Print current token information if available
+            if let Some(token) = &self.current_token {
+                writeln!(f, "\nCurrent token: {:#?}", token.token_type)?;
+            }
+            
+            // Print context stack information if available
+            if !self.context_stack.is_empty() {
+                writeln!(f, "\nLexical context stack (newest first):")?;
+                for (i, context) in self.context_stack.iter().enumerate() {
+                    writeln!(f, "  {}: {}", i, context)?;
+                }
+            }
         } else {
             writeln!(f, "at line {}, column {}", self.line, self.column)?;
+            
+            // Print current token information if available
+            if let Some(token) = &self.current_token {
+                writeln!(f, "\nCurrent token: {:#?}", token.token_type)?;
+            }
+            
+            // Print context stack information if available
+            if !self.context_stack.is_empty() {
+                writeln!(f, "\nLexical context stack (newest first):")?;
+                for (i, context) in self.context_stack.iter().enumerate() {
+                    writeln!(f, "  {}: {}", i, context)?;
+                }
+            }
         }
         
         Ok(())
@@ -88,7 +202,6 @@ fn num_digits(n: usize) -> usize {
     count
 }
 
-
 impl std::error::Error for ParserError {}
 
 impl From<LexerError> for ParserError {
@@ -99,6 +212,8 @@ impl From<LexerError> for ParserError {
             column: error.column,
             source_line: None,
             source_span: None,
+            context_stack: Vec::new(),
+            current_token: None,
         }
     }
 }
@@ -149,5 +264,44 @@ fn extract_source_line_with_context(source: &str, line_number: usize, column: us
     result
 }
 
-/// Type alias for parser results
 pub type ParseResult<T> = Result<T, ParserError>;
+
+#[macro_export]
+macro_rules! parser_error_at_current {
+    ($self:expr, $message:expr) => {
+        $crate::parser::error::ParserError::at_current($self, $message)
+    };
+    ($self:expr, $fmt:expr, $($arg:tt)*) => {
+        $crate::parser::error::ParserError::at_current($self, &format!($fmt, $($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! parser_error_at_previous {
+    ($self:expr, $message:expr) => {
+        $crate::parser::error::ParserError::at_previous($self, $message)
+    };
+    ($self:expr, $fmt:expr, $($arg:tt)*) => {
+        $crate::parser::error::ParserError::at_previous($self, &format!($fmt, $($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! parser_error_at_current_mut {
+    ($self:expr, $message:expr) => {
+        $crate::parser::error::ParserError::at_current_mut($self, $message)
+    };
+    ($self:expr, $fmt:expr, $($arg:tt)*) => {
+        $crate::parser::error::ParserError::at_current_mut($self, &format!($fmt, $($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! parser_error_at_previous_mut {
+    ($self:expr, $message:expr) => {
+        $crate::parser::error::ParserError::at_previous_mut($self, $message)
+    };
+    ($self:expr, $fmt:expr, $($arg:tt)*) => {
+        $crate::parser::error::ParserError::at_previous_mut($self, &format!($fmt, $($arg)*))
+    };
+}

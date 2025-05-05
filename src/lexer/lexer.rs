@@ -1,14 +1,19 @@
 use std::collections::HashSet;
 use crate::lexer::{Token, TokenType, TemplatePart, LexerError};
 
+// TODO Specialized Token Handling for Lexer Optimization
+
 pub struct Lexer<'a> {
     source: &'a str,
-    chars: Vec<char>,   // TODO chars: Peekable<Chars<'a>>,
+    bytes: &'a [u8],  // Direct access to the underlying bytes
+    source_len: usize,
     tokens: Vec<Token>,
     start: usize,
     current: usize,
     line: usize,
     column: usize,
+    current_char: char,
+    previous_char: char,
 }
 
 macro_rules! add_token {
@@ -21,16 +26,180 @@ macro_rules! add_token {
 }
 
 impl<'a> Lexer<'a> {
+
+    #[inline]
     pub fn new(source: &'a str) -> Self {
         Lexer {
-            chars: source.chars().collect(),
             source,
+            bytes: source.as_bytes(),
+            source_len: source.len(),
             tokens: Vec::with_capacity(source.len() / 4),
             start: 0,
             current: 0,
             line: 1,
             column: 0,
+            current_char: '\0',
+            previous_char: '\0',
         }
+    }
+    
+    #[inline(always)]
+    fn identifier(&mut self) {
+        let start_column = self.column - 1;
+        
+        // Track whether the identifier is all ASCII
+        let mut is_all_ascii = true;
+        
+        // Fast path for identifiers (most common case)
+        while !self.is_at_end() {
+            if self.current < self.source_len {
+                let b = self.bytes[self.current];
+                
+                // Fast check for ASCII alphanumeric characters
+                if (b >= b'a' && b <= b'z') || 
+                   (b >= b'A' && b <= b'Z') || 
+                   (b >= b'0' && b <= b'9') || 
+                   b == b'_' || 
+                   b == b'$' {
+                    // Advance without the overhead of UTF-8 decoding
+                    self.previous_char = self.current_char;
+                    self.current_char = b as char;
+                    self.current += 1;
+                    self.column += 1;
+                    continue;
+                } else if b >= 128 {
+                    // Found a non-ASCII byte
+                    is_all_ascii = false;
+                    // Process it with the regular advance method
+                    self.advance();
+                    continue;
+                }
+            }
+            
+            // If we reach here, either we're at the end or the next character 
+            // is not an identifier character
+            if !self.is_at_end() && self.is_alphanumeric(self.peek()) {
+                let c = self.advance();
+                // Check if we just processed a non-ASCII character
+                if !c.is_ascii() {
+                    is_all_ascii = false;
+                }
+            } else {
+                break;
+            }
+        }
+        
+        // Calculate the length of the identifier
+        let length = self.current - self.start;
+        
+        // Only check for keywords if the identifier is within the length range of keywords
+        // and is all ASCII (since all keywords are ASCII)
+        let token_type = if is_all_ascii && length >= 2 && length <= 10 {
+            // For ASCII identifiers, we can do direct byte comparisons
+            let bytes = &self.bytes[self.start..self.current];
+            
+            // First check by length for faster matching
+            match bytes.len() {
+                2 => match bytes {
+                    b"do" => TokenType::Do,
+                    b"if" => TokenType::If,
+                    b"in" => TokenType::In,
+                    b"of" => TokenType::Of,
+                    b"as" => TokenType::As,
+                    _ => self.create_identifier_token(),
+                },
+                3 => match bytes {
+                    b"for" => TokenType::For,
+                    b"let" => TokenType::Let,
+                    b"new" => TokenType::New,
+                    b"try" => TokenType::Try,
+                    b"var" => TokenType::Var,
+                    b"get" => TokenType::Get,
+                    b"set" => TokenType::Set,
+                    _ => self.create_identifier_token(),
+                },
+                4 => match bytes {
+                    b"case" => TokenType::Case,
+                    b"else" => TokenType::Else,
+                    b"enum" => TokenType::Enum,
+                    b"from" => TokenType::From,
+                    b"null" => TokenType::Null,
+                    b"this" => TokenType::This,
+                    b"true" => TokenType::True,
+                    b"void" => TokenType::Void,
+                    b"with" => TokenType::With,
+                    b"eval" => TokenType::Eval,
+                    _ => self.create_identifier_token(),
+                },
+                5 => match bytes {
+                    b"async" => TokenType::Async,
+                    b"await" => TokenType::Await,
+                    b"break" => TokenType::Break,
+                    b"catch" => TokenType::Catch,
+                    b"class" => TokenType::Class,
+                    b"const" => TokenType::Const,
+                    b"false" => TokenType::False,
+                    b"super" => TokenType::Super,
+                    b"throw" => TokenType::Throw,
+                    b"while" => TokenType::While,
+                    b"yield" => TokenType::Yield,
+                    _ => self.create_identifier_token(),
+                },
+                6 => match bytes {
+                    b"delete" => TokenType::Delete,
+                    b"export" => TokenType::Export,
+                    b"import" => TokenType::Import,
+                    b"public" => TokenType::Public,
+                    b"return" => TokenType::Return,
+                    b"static" => TokenType::Static,
+                    b"switch" => TokenType::Switch,
+                    b"target" => TokenType::Target,
+                    b"typeof" => TokenType::Typeof,
+                    _ => self.create_identifier_token(),
+                },
+                7 => match bytes {
+                    b"default" => TokenType::Default,
+                    b"extends" => TokenType::Extends,
+                    b"finally" => TokenType::Finally,
+                    b"package" => TokenType::Package,
+                    b"private" => TokenType::Private,
+                    _ => self.create_identifier_token(),
+                },
+                8 => match bytes {
+                    b"continue" => TokenType::Continue,
+                    b"debugger" => TokenType::Debugger,
+                    b"function" => TokenType::Function,
+                    _ => self.create_identifier_token(),
+                },
+                9 => match bytes {
+                    b"arguments" => TokenType::Arguments,
+                    b"interface" => TokenType::Interface,
+                    b"protected" => TokenType::Protected,
+                    b"undefined" => TokenType::Undefined,
+                    _ => self.create_identifier_token(),
+                },
+                10 => match bytes {
+                    b"instanceof" => TokenType::InstanceOf,
+                    b"implements" => TokenType::Implements,
+                    b"constructor" => TokenType::Constructor,
+                    _ => self.create_identifier_token(),
+                },
+                _ => self.create_identifier_token(),
+            }
+        } else {
+            // For non-ASCII identifiers or identifiers with lengths outside keyword range
+            self.create_identifier_token()
+        };
+        
+        // Add the token
+        add_token!(self, token_type, length as usize);
+    }
+
+    // Helper method to create an identifier token
+    #[inline]
+    fn create_identifier_token(&self) -> TokenType {
+        let text = &self.source[self.start..self.current];
+        TokenType::Identifier(text.to_string())
     }
 
     pub fn scan_tokens(&mut self) -> Result<Vec<Token>, LexerError> {
@@ -240,6 +409,7 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
     
+    #[inline(always)]
     fn line_comment(&mut self) {
         while !self.is_at_end() && self.peek() != '\n' {
             self.advance();
@@ -274,7 +444,7 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// Handles a forward slash character, which could be division, regexp, or comment
+    #[inline]
     fn handle_slash(&mut self) -> Result<(), LexerError> {
         if self.match_char('/') {
             self.line_comment();
@@ -290,8 +460,7 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// Determines if a forward slash should be interpreted as the start of a regular expression
-    /// rather than a division operator based on JavaScript syntax rules.
+    #[inline]
     fn is_regexp_start(&self) -> bool {
         if self.tokens.is_empty() {
             return true;
@@ -407,9 +576,7 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-
-    
-    #[inline]
+    #[inline(always)]
     fn is_regexp_flag(&self, c: char) -> bool {
         matches!(c, 'g' | 'i' | 'm' | 's' | 'u' | 'y' | 'd')
     }
@@ -635,8 +802,9 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    fn parse_unicode_escape(&mut self, start_line: usize, start_column: usize) -> Result<char, LexerError> {
-        if self.peek() == '{' {
+    fn parse_unicode_escape(&mut self, start_line: usize, start_column: usize) -> Result<char, LexerError> {  
+        if self.peek() == '{' {  
+            // Unicode code point escape \u{XXXXXX} - this part is already correct  
             // Unicode code point escape \u{XXXXXX}
             self.advance(); // Consume '{'
             
@@ -687,41 +855,104 @@ impl<'a> Lexer<'a> {
                     start_column
                 ))
             }
-        } else {
-            // Fixed 4-digit Unicode escape \uXXXX
-            let mut hex_string = String::with_capacity(4);
-            
-            for _ in 0..4 {
-                if self.is_at_end() || !self.is_hex_digit(self.peek()) {
-                    return Err(LexerError::new(
-                        "Invalid Unicode escape sequence: expected 4 hex digits",
-                        start_line,
-                        start_column
-                    ));
-                }
-                hex_string.push(self.advance());
-            }
-            
-            match u16::from_str_radix(&hex_string, 16) {
-                Ok(code_unit) => {
-                    match std::char::from_u32(code_unit as u32) {
-                        Some(c) => Ok(c),
-                        None => Err(LexerError::new(
-                            &format!("Invalid Unicode code unit: {}", hex_string),
-                            start_line,
-                            start_column
-                        ))
-                    }
-                },
-                Err(_) => Err(LexerError::new(
-                    &format!("Invalid Unicode escape sequence: \\u{}", hex_string),
-                    start_line,
-                    start_column
-                ))
-            }
-        }
+        } else {  
+            // Fixed 4-digit Unicode escape \uXXXX  
+            let mut hex_string = String::with_capacity(4);  
+              
+            for _ in 0..4 {  
+                if self.is_at_end() || !self.is_hex_digit(self.peek()) {  
+                    return Err(LexerError::new(  
+                        "Invalid Unicode escape sequence: expected 4 hex digits",  
+                        start_line,  
+                        start_column  
+                    ));  
+                }  
+                hex_string.push(self.advance());  
+            }  
+              
+            match u16::from_str_radix(&hex_string, 16) {  
+                Ok(code_unit) => {  
+                    // Check if this is a high surrogate  
+                    if (0xD800..=0xDBFF).contains(&code_unit) {  
+                        // This is a high surrogate, we need to look for a low surrogate  
+                        if self.peek() == '\\' && self.peek_next() == 'u' {  
+                            // Save current position in case we need to revert  
+                            let save_current = self.current;  
+                            let save_line = self.line;  
+                            let save_column = self.column;  
+                              
+                            // Consume the \u  
+                            self.advance(); // \  
+                            self.advance(); // u  
+                              
+                            // Parse the next 4 hex digits  
+                            let mut low_hex = String::with_capacity(4);  
+                            let mut valid_low_surrogate = true;  
+                              
+                            for _ in 0..4 {  
+                                if self.is_at_end() || !self.is_hex_digit(self.peek()) {  
+                                    valid_low_surrogate = false;  
+                                    break;  
+                                }  
+                                low_hex.push(self.advance());  
+                            }  
+                              
+                            if valid_low_surrogate {  
+                                if let Ok(low_code_unit) = u16::from_str_radix(&low_hex, 16) {  
+                                    if (0xDC00..=0xDFFF).contains(&low_code_unit) {  
+                                        // Valid surrogate pair, calculate the Unicode code point  
+                                        let code_point = 0x10000 + ((code_unit - 0xD800) as u32 * 0x400) + (low_code_unit - 0xDC00) as u32;  
+                                        return match std::char::from_u32(code_point) {  
+                                            Some(c) => Ok(c),  
+                                            None => Err(LexerError::new(  
+                                                &format!("Invalid Unicode surrogate pair: \\u{}\\u{}", hex_string, low_hex),  
+                                                start_line,  
+                                                start_column  
+                                            ))  
+                                        };  
+                                    }  
+                                }  
+                            }  
+                              
+                            // If we get here, the sequence after the high surrogate wasn't a valid low surrogate  
+                            // Revert to the position after the high surrogate  
+                            self.current = save_current;  
+                            self.line = save_line;  
+                            self.column = save_column;  
+                        }  
+                          
+                        // Lone high surrogate without a following low surrogate  
+                        // In strict mode, this should be an error, but JavaScript allows it  
+                        // and replaces it with a replacement character  
+                        return Ok('\u{FFFD}'); // Unicode replacement character  
+                    }  
+                      
+                    // Check if this is a low surrogate without a preceding high surrogate  
+                    if (0xDC00..=0xDFFF).contains(&code_unit) {  
+                        // Lone low surrogate, also replace with replacement character  
+                        return Ok('\u{FFFD}');  
+                    }  
+                      
+                    // Regular BMP character  
+                    match std::char::from_u32(code_unit as u32) {  
+                        Some(c) => Ok(c),  
+                        None => Err(LexerError::new(  
+                            &format!("Invalid Unicode code unit: {}", hex_string),  
+                            start_line,  
+                            start_column  
+                        ))  
+                    }  
+                },  
+                Err(_) => Err(LexerError::new(  
+                    &format!("Invalid Unicode escape sequence: \\u{}", hex_string),  
+                    start_line,  
+                    start_column  
+                ))  
+            }  
+        }  
     }
 
+    #[inline]
     fn parse_hex_escape(&mut self, start_line: usize, start_column: usize) -> Result<char, LexerError> {
         // Hexadecimal escape sequence \xXX
         let mut hex_string = String::with_capacity(2);
@@ -852,6 +1083,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    #[inline]
     fn binary_number(&mut self, start_column: usize) -> Result<(), LexerError> {
         let start = self.current;
         
@@ -909,6 +1141,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    #[inline]
     fn octal_number(&mut self, start_column: usize) -> Result<(), LexerError> {
         let start = self.current;
         
@@ -966,7 +1199,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-
+    #[inline]
     fn hex_number(&mut self, start_column: usize) -> Result<(), LexerError> {
         let start = self.current;
         
@@ -1024,13 +1257,14 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn consume_digits(&mut self) {
         while self.is_digit(self.peek()) || self.peek() == '_' {
             self.advance();
         }
     }
-    
+
+    #[inline]
     fn extract_number_value(&self, start: usize, end: usize) -> String {
         // Remove numeric separators (_)
         let mut value_str = String::with_capacity(end - start);
@@ -1042,158 +1276,109 @@ impl<'a> Lexer<'a> {
         value_str
     }
 
-    fn identifier(&mut self) {
-        let start_column = self.column - 1;
-        
-        while self.is_alphanumeric(self.peek()) {
-            self.advance();
-        }
-        
-        // Get the identifier text
-        let text = &self.source[self.start..self.current];
-        
-        // Check if it's a keyword using a match statement for better performance
-        let token_type = match text {
-            "break" => TokenType::Break,
-            "case" => TokenType::Case,
-            "catch" => TokenType::Catch,
-            "class" => TokenType::Class,
-            "const" => TokenType::Const,
-            "continue" => TokenType::Continue,
-            "debugger" => TokenType::Debugger,
-            "default" => TokenType::Default,
-            "delete" => TokenType::Delete,
-            "do" => TokenType::Do,
-            "else" => TokenType::Else,
-            "enum" => TokenType::Enum,
-            "export" => TokenType::Export,
-            "extends" => TokenType::Extends,
-            "false" => TokenType::False,
-            "finally" => TokenType::Finally,
-            "for" => TokenType::For,
-            "function" => TokenType::Function,
-            "if" => TokenType::If,
-            "import" => TokenType::Import,
-            "in" => TokenType::In,
-            "instanceof" => TokenType::InstanceOf,
-            "new" => TokenType::New,
-            "null" => TokenType::Null,
-            "return" => TokenType::Return,
-            "super" => TokenType::Super,
-            "undefined" => TokenType::Undefined,
-            "constructor" => TokenType::Constructor,
-            "switch" => TokenType::Switch,
-            "this" => TokenType::This,
-            "throw" => TokenType::Throw,
-            "true" => TokenType::True,
-            "try" => TokenType::Try,
-            "typeof" => TokenType::Typeof,
-            "var" => TokenType::Var,
-            "void" => TokenType::Void,
-            "while" => TokenType::While,
-            "with" => TokenType::With,
-            "yield" => TokenType::Yield,
-            "async" => TokenType::Async,
-            "await" => TokenType::Await,
-            "let" => TokenType::Let,
-            "static" => TokenType::Static,
-            "get" => TokenType::Get,
-            "set" => TokenType::Set,
-            "of" => TokenType::Of,
-            "as" => TokenType::As,
-            "from" => TokenType::From,
-            "target" => TokenType::Target,
-            "implements" => TokenType::Implements,
-            "interface" => TokenType::Interface,
-            "package" => TokenType::Package,
-            "private" => TokenType::Private,
-            "protected" => TokenType::Protected,
-            "public" => TokenType::Public,
-            "arguments" => TokenType::Arguments,
-            "eval" => TokenType::Eval,
-            _ => TokenType::Identifier(text.to_string()),
-        };
-        
-        let length = (self.current - self.start) as usize;
-
-        add_token!(self, token_type, length);
-    }
-
-    #[inline]
+    #[inline(always)]
     fn is_digit(&self, c: char) -> bool {
-        c.is_ascii_digit()
+        c >= '0' && c <= '9'  // Direct comparison is faster than is_ascii_digit()
     }
     
-    #[inline]
+    #[inline(always)]
     fn is_alpha(&self, c: char) -> bool {
-        c.is_ascii_alphabetic() || c == '_' || c == '$'
+        (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$'
     }
     
-    #[inline]
+    #[inline(always)]
     fn is_alphanumeric(&self, c: char) -> bool {
         self.is_alpha(c) || self.is_digit(c)
     }
     
-    #[inline]
+    #[inline(always)]
     fn is_hex_digit(&self, c: char) -> bool {
-        c.is_ascii_hexdigit()
+        (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
     }
     
-    #[inline]
+    #[inline(always)]
+    fn is_at_end(&self) -> bool {
+        self.current >= self.source_len
+    }
+    
+    #[inline(always)]
     fn is_octal_digit(&self, c: char) -> bool {
         c >= '0' && c <= '7'
     }
     
-    #[inline]
-    fn is_at_end(&self) -> bool {
-        self.current >= self.chars.len()
-    }
     
-    #[inline]
+    #[inline(always)]
     fn advance(&mut self) -> char {
-        let c = self.chars[self.current];
-        self.current += 1;
+        if self.is_at_end() {
+            return '\0';
+        }
+        
+        // Fast path for ASCII (most common case in JS)
+        if self.current < self.source_len && self.bytes[self.current] < 128 {
+            let c = self.bytes[self.current] as char;
+            self.previous_char = self.current_char;
+            self.current_char = c;
+            self.current += 1;
+            self.column += 1;
+            return c;
+        }
+        
+        // Fallback for non-ASCII (UTF-8)
+        let c = self.source[self.current..].chars().next().unwrap();
+        self.previous_char = self.current_char;
+        self.current_char = c;
+        self.current += c.len_utf8();
         self.column += 1;
         c
     }
 
-    #[inline]
+    #[inline(always)]
     fn peek(&self) -> char {
         if self.is_at_end() {
-            '\0'
-        } else {
-            self.chars[self.current]
+            return '\0';
         }
+        if self.bytes[self.current] < 128 {
+            return self.bytes[self.current] as char;
+        }
+        self.source[self.current..].chars().next().unwrap()
     }
-    
-    #[inline]
+
+    #[inline(always)]
     fn peek_next(&self) -> char {
-        if self.current + 1 >= self.chars.len() {
-            '\0'
-        } else {
-            self.chars[self.current + 1]
+        if self.current + 1 >= self.source_len {
+            return '\0';
         }
+        
+        // Fast path for ASCII
+        if self.bytes[self.current] < 128 && self.bytes[self.current + 1] < 128 {
+            return self.bytes[self.current + 1] as char;
+        }
+        
+        // If current is ASCII but next might not be
+        if self.bytes[self.current] < 128 {
+            let next_pos = self.current + 1;
+            return self.source[next_pos..].chars().next().unwrap_or('\0');
+        }
+        
+        // Both current and next are non-ASCII
+        let mut iter = self.source[self.current..].chars();
+        iter.next();
+        iter.next().unwrap_or('\0')
     }
-    
-    #[inline]
+
+    #[inline(always)]
     fn peek_previous(&self) -> char {
-        if self.current == 0 {
-            '\0'
-        } else {
-            self.chars[self.current - 1]
-        }
+        self.previous_char
     }
     
-    #[inline]
+    #[inline(always)]
     fn match_char(&mut self, expected: char) -> bool {
         if self.is_at_end() || self.peek() != expected {
             false
         } else {
-            self.current += 1;
-            self.column += 1;
+            self.advance();
             true
         }
     }
-    
 }
 

@@ -1,5 +1,7 @@
+use super::prelude::*;
+
 use crate::ast::*;
-use crate::lexer::{Token, TokenType, TemplatePart};
+use crate::lexer::{Token, TokenType, TemplatePart, LexicalContext};
 use super::error::ParseResult;
 use super::core::Parser;
 
@@ -24,7 +26,7 @@ pub enum Precedence {
     Prefix,          // ! ~ + - ++ -- typeof void delete
     Postfix,         // ++ --
     Call,            // . [] ()
-    //Primary
+    Primary
 }
 
 impl Parser {
@@ -96,13 +98,13 @@ impl Parser {
                 }
             },
             // Await expression
-            Some(TokenType::Await) if self.state.allow_await => {
+            Some(TokenType::Await) if self.allows_await() => {
                 self.advance();
                 let argument = self.parse_expression_with_precedence(Precedence::Prefix)?;
                 Expression::Await(Box::new(argument))
             },
             // Yield expression
-            Some(TokenType::Yield) if self.state.allow_yield => {
+            Some(TokenType::Yield) if self.allows_yield() => {
                 self.advance();
                 let delegate = self.match_token(&TokenType::Star);
                 
@@ -212,24 +214,12 @@ impl Parser {
                                         match temp_parser.parse_expression() {
                                             Ok(expr) => expressions.push(expr),
                                             Err(e) => {
-                                                return Err(super::error::ParserError::with_token_span(
-                                                    &format!("Invalid expression in template literal: {}", e.message),
-                                                    token_line,
-                                                    token_column,
-                                                    token_length,
-                                                    &self.get_source_text()
-                                                ));
+                                                return Err(parser_error_at_current!(self, "Invalid expression in template literal: {}", e.message));
                                             }
                                         }
                                     },
                                     Err(e) => {
-                                        return Err(super::error::ParserError::with_token_span(
-                                            &format!("Error tokenizing expression in template literal: {}", e.message),
-                                            token_line,
-                                            token_column,
-                                            token_length,
-                                            &self.get_source_text()
-                                        ));
+                                        return Err(parser_error_at_current!(self, "Error tokenizing expression in template literal: {}", e.message));
                                     }
                                 }
                                 
@@ -247,17 +237,7 @@ impl Parser {
                         if quasis.len() == expressions.len() {
                             quasis.push("".into());
                         } else {
-                            return Err(super::error::ParserError::with_token_span(
-                                &format!(
-                                    "Invalid template literal: expected {} quasis but got {}", 
-                                    expressions.len() + 1, 
-                                    quasis.len(),
-                                ),
-                                token_line,
-                                token_column,
-                                token_length,
-                                &self.get_source_text()
-                            ));
+                            return Err(parser_error_at_current!(self, "Invalid template literal: expected {} quasis but got {}", expressions.len() + 1, quasis.len()));
                         }
                     }
                     
@@ -274,6 +254,7 @@ impl Parser {
             //Some(TokenType::Get) | 
             //Some(TokenType::Set) | 
             //Some(TokenType::From) => {
+
                 let name = self.expect_identifier("Expected identifier in expression")?;
                 if self.check(&TokenType::Arrow) {
                     let param = Expression::Identifier(name);
@@ -283,114 +264,65 @@ impl Parser {
                 Expression::Identifier(name)
             },
             Some(TokenType::LeftParen) => {
+                //println!("In ( {:#?}", self.peek_token_type());
+                self.advance(); // Consume the '('
 
-                // TODO tricky tricky
-
-                self.advance(); // consume '('
-
-                //println!("In (");
-
-                // TODO IIFE
-
-//                            if self.match_token(&TokenType::LeftParen) {
-//                                let arguments = self.parse_arguments()?;
-//                                body = Expression::Call {
-//                                    callee: Box::new(body),
-//                                    arguments,
-//                                    optional: false,
-//                                };
-//                            }
-    
-
-
-                match self.parse_expression() {
-                    Ok(expr) => {
-                        //println!("Parsed expr {:#?}", expr);
-                        //println!("Current token {:#?}", self.peek_token_type());
-                        
-                        match expr {
-                            Expression::ArrowFunction { .. } => {
-                                self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
-                                return Ok(expr);
-                            }
-                            _ => {},
-                        }
-
-                        let mut params = vec![];
-
-                        // TODO better way to extract Expressions into Patterns
-
-                        match expr {
-                            // TODO sequences are tuples or maybe just keep it as is?
-                            Expression::Sequence(ref seq) => {
-                                println!("Found sequence of identifiers {:#?}", seq);
-                                for item in seq {
-                                    match item {
-                                        Expression::Identifier(ref name) => {
-                                            params.push(Expression::Identifier(name.clone()));
-                                        },
-                                        _ => {},    // TODO rest
-                                    }
-                                }
-                            },
-                            Expression::Identifier(ref name) => {
-                                println!("Found identifier {:#?}", name);
-                                params.push(Expression::Identifier(name.clone()));
-                            },
-                            /*
-                            Expression::ArrowFunction { .. } => {
-                                self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
-                                return Ok(expr);
-                            }
-                            */
-                            _ => {},
-                        }
-
-                        if self.match_token(&TokenType::Arrow) {
-                            println!("Now I am in body of arrow function");
-
-                            let body = self.parse_arrow_function_body(params, false)?;
-
-                            self.consume(&TokenType::RightParen, "Expected ')' after expression")?;        
-                            return Ok(body);
-                        }
-                        
-                        //println!("Not in body of arrow function just generic expression");
-
-                        self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
-
-                        if self.match_token(&TokenType::Arrow) {
-
-                            println!("Acumulated params {:#?}", params);
-
-                            println!("Backtrack it was actually arrow function");
-
-                            let body = self.parse_arrow_function_body(params, false)?;
-                            return Ok(body);
-                        }   
-                        return Ok(expr);
-                    },
-                    Err(err) => {
-                        println!("In error");
-                        
-                        self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
-
-                        println!("Current token {:#?}", self.peek_token_type());
-
-                        if self.match_token(&TokenType::Arrow) {
-                            println!("Now I am in body of arrow function");
-
-                            // TODO skipped over params
-                            let params = vec![];
-                            let body = self.parse_arrow_function_body(params, false)?;
-                            return Ok(body);
-                        }
-
-                        return Err(err);
-                    },
+                // Handle empty parameter list: () => ...
+                if self.match_token(&TokenType::RightParen) {
+                    return if self.match_token(&TokenType::Arrow) {
+                        self.parse_arrow_function_body(vec![], false)
+                    } else {
+                        let token = self.previous().unwrap();
+                        Err(parser_error_at_current!(self, "Unexpected empty parentheses '()'"))
+                    };
                 }
+
+                //println!("Here 1 current token {:#?}", self.peek_token_type());
+                let mut expr = self.parse_expression()?;
+
+                //println!("Here 2");
+                // Handle single-parameter or nested parentheses: (x) => ..., ((expr))
+                if self.match_token(&TokenType::RightParen) {
+                    if self.match_token(&TokenType::Arrow) {
+                        let params = match expr {
+                            //Expression::Identifier(_) => vec![expr],
+                            //Expression::Sequence(seq) => seq,
+                            Expression::Sequence(seq) => seq,//self.flatten_sequence(seq),
+                            _ => vec![expr],
+                        };
+                        return self.parse_arrow_function_body(params, false);
+                    }
+                } else if self.check(&TokenType::Comma) {
+
+                    //println!("Some comma {:#?}", self.peek_token_type());
+
+                    // Handle comma-separated parameters: (a, b, c)
+                    let mut params = vec![expr];
+                    while self.match_token(&TokenType::Comma) {
+                        //println!("Current token {:#?}", self.peek_token_type());
+                        params.push(self.parse_expression_with_precedence(Precedence::Assignment)?);
+                    }
+                    self.consume(&TokenType::RightParen, "Expected ')' after parameters")?;
+                    return if self.match_token(&TokenType::Arrow) {
+                        self.parse_arrow_function_body(params, false)
+                    } else {
+                        Ok(Expression::Sequence(params))
+                    };
+                } else {
+                    self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
+                }
+
+                // Handle expressions after ')': ., [ or (
+                if self.match_token(&TokenType::Dot) {
+                    expr = self.parse_expression_with_precedence(Precedence::Assignment)?;
+                } else if self.check(&TokenType::LeftBracket) || self.check(&TokenType::LeftParen) {
+                    expr = self.parse_expression_with_precedence(Precedence::Call)?;
+                }
+
+                expr
             },
             Some(TokenType::LeftBracket) => {
+                //println!("I am here");
                 self.advance();
                 let mut elements = Vec::new();
                 while !self.check(&TokenType::RightBracket) && !self.is_at_end() {
@@ -439,52 +371,11 @@ impl Parser {
                                 }
                             }
                         }
-                        
-                        // Parse property key
-                        let key = if self.match_token(&TokenType::LeftBracket) {
-                            // Computed property key
-                            let expr = self.parse_expression()?;
-                            self.consume(&TokenType::RightBracket, "Expected ']' after computed property key")?;
-                            PropertyKey::Computed(expr)
-                        } else if self.match_token(&TokenType::Hash) {
-                            // Private identifier (class fields/methods)
-                            let name = self.expect_identifier("Expected private identifier name")?;
-                            PropertyKey::PrivateIdentifier(name)
-                        } else if let Some(TokenType::StringLiteral(_)) = self.peek_token_type() {
-                            if let TokenType::StringLiteral(s) = self.advance().unwrap().token_type.clone() {
-                                PropertyKey::StringLiteral(s.into_boxed_str())
-                            } else {
-                                unreachable!()
-                            }
-                        } else if let Some(TokenType::NumberLiteral(_)) = self.peek_token_type() {
-                            if let TokenType::NumberLiteral(n) = self.advance().unwrap().token_type {
-                                PropertyKey::NumericLiteral(n)
-                            } else {
-                                unreachable!()
-                            }
-                        } else if self.check(&TokenType::Default) {
-                            self.advance();
-                            PropertyKey::Identifier("default".into())
-                        } else if self.check(&TokenType::Get) {
-                            self.advance();
-                            PropertyKey::Identifier("get".into())
-                        } else if self.check(&TokenType::Set) {
-                            self.advance();
-                            PropertyKey::Identifier("set".into())
-                        } else if self.check(&TokenType::From) {
-                            self.advance();
-                            PropertyKey::Identifier("from".into())
-                        } else if self.check(&TokenType::As) {
-                            self.advance();
-                            PropertyKey::Identifier("as".into())
-                        }   else if self.check(&TokenType::For) {
-                            self.advance();
-                            PropertyKey::Identifier("for".into())
-                        } else {
-                            // Identifier
-                            let name = self.expect_identifier("Expected property name 1")?;
-                            PropertyKey::Identifier(name)
-                        };
+
+                        // Use with_context for property key parsing
+                        let key = self.with_context(LexicalContext::PropertyKey, |parser| {
+                            parser.parse_property_key()
+                        })?;
                         
                         let computed = matches!(key, PropertyKey::Computed(_));
                         
@@ -497,7 +388,10 @@ impl Parser {
                             };
                             
                             let params = self.parse_function_params()?;
+                            
+                            self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
                             let body = self.parse_function_body(is_async, is_generator)?;
+                            self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
                             
                             properties.push(ObjectProperty::Method {
                                 key,
@@ -538,6 +432,8 @@ impl Parser {
                     }
                     
                     if !self.check(&TokenType::RightBrace) {
+                        //println!("Now have token {:#?}", self.peek_token());
+
                         self.consume(&TokenType::Comma, "Expected ',' after property")?;
                         
                         // Allow trailing comma
@@ -548,11 +444,12 @@ impl Parser {
                         break;
                     }
                 }
-            
+
                 self.consume(&TokenType::RightBrace, "Expected '}' after object literal")?;
-            
+
                 Expression::Object(properties)
             },
+
             Some(TokenType::Function) => self.parse_function_expression()?,
             Some(TokenType::Class) => self.parse_class_expression()?,
             Some(TokenType::New) => {
@@ -569,23 +466,11 @@ impl Parser {
                             }
                         } else {
                             let token = self.peek_token().unwrap();
-                            return Err(super::error::ParserError::with_token_span(
-                                "Expected 'target' after 'new.'",
-                                token.line,
-                                token.column,
-                                token.length,
-                                &self.get_source_text(),
-                            ));
+                            return Err(parser_error_at_current!(self, "Expected 'target' after 'new.'"));
                         }
                     } else {
                         let token = self.peek_token().unwrap();
-                        return Err(super::error::ParserError::with_token_span(
-                            "Expected 'target' after 'new.'",
-                            token.line,
-                            token.column,
-                            token.length,
-                            &self.get_source_text(),
-                        ));
+                        return Err(parser_error_at_current!(self, "Expected 'target' after 'new.'"));
                     }
                 } else {
                     // Regular new expression
@@ -618,7 +503,7 @@ impl Parser {
                             }
                         }
                         
-                        self.consume(&TokenType::RightParen, "Expected ')' after arguments")?;
+                        self.consume(&TokenType::RightParen, "Expected ')' after arguments 1")?;
                         args
                     } else {
                         Vec::new()
@@ -645,14 +530,11 @@ impl Parser {
             },
             Some(TokenType::Async) if self.is_async_function() => self.parse_async_function_expression()?,
             _ => {
+
+                // TODO trailing comma gets there
+
                 let token = self.peek_token().unwrap_or_else(|| self.previous().unwrap());
-                return Err(super::error::ParserError::with_token_span(
-                    &format!("Unexpected token in expression: {:?}", token.token_type),
-                    token.line,
-                    token.column,
-                    token.length,
-                    &self.get_source_text()
-                ));
+                return Err(parser_error_at_current!(self, "Unexpected token in expression: {:?}", token.token_type));
             }
         };
 
@@ -726,13 +608,7 @@ impl Parser {
                 if self.match_any(&[TokenType::PlusPlus, TokenType::MinusMinus]) {
                     if !matches!(expr, Expression::Identifier(_) | Expression::Member { .. }) {
                         let token = self.previous().unwrap();
-                        return Err(super::error::ParserError::with_token_span(
-                            "Invalid left-hand side in postfix operation", 
-                            token.line, 
-                            token.column,
-                            token.length,
-                            &self.get_source_text()
-                        ));
+                        return Err(parser_error_at_current!(self, "Invalid left-hand side in postfix operation"));
                     }
                     
                     let operator = match self.previous().unwrap().token_type {
@@ -754,9 +630,15 @@ impl Parser {
             match current_precedence {
                 Precedence::Comma => {
                     self.advance(); // consume comma
-                    let right = self.parse_expression_with_precedence(Precedence::Assignment)?;
-                    // TODO if None or Empty its fine
-                    expr = Expression::Sequence(vec![expr, right]);
+
+                    if !self.check(&TokenType::RightParen) {                    
+                        let right = self.parse_expression_with_precedence(Precedence::Assignment)?;
+                        if let Expression::Sequence(ref mut seq) = expr {
+                            seq.push(right);
+                        } else {
+                            expr = Expression::Sequence(vec![expr, right]);
+                        }
+                    }
                 },
                 Precedence::Assignment => {
                     // Match assignment operator
@@ -800,13 +682,7 @@ impl Parser {
                     if !matches!(expr, Expression::Identifier(_) | Expression::Member { .. } | Expression::Array(_) | Expression::Object(_)) {
                         let binding = Token::new(TokenType::EOF, 0, 0, 0);
                         let token = self.previous().unwrap_or(&binding);
-                        return Err(super::error::ParserError::with_token_span(
-                            "Invalid left-hand side in assignment", 
-                            token.line, 
-                            token.column,
-                            token.length,
-                            &self.get_source_text()
-                        ));
+                        return Err(parser_error_at_current!(self, "Invalid left-hand side in assignment"));
                     }
                     
                     let right = self.parse_expression_with_precedence(Precedence::Assignment)?;
@@ -891,6 +767,17 @@ impl Parser {
                         right: Box::new(right),
                     };
                 },
+                // TODO implement
+//                Precedence::NullishCoalescing => {  
+//                    self.advance(); // consume '??'  
+//                    let right = self.parse_expression_with_precedence(Precedence::NullishCoalescing)?;  
+                      //
+//                    expr = Expression::Logical {  
+//                        operator: LogicalOperator::NullishCoalescing,  
+//                        left: Box::new(expr),  
+//                        right: Box::new(right),  
+//                    };  
+//                },
                 Precedence::BitwiseOr | 
                 Precedence::BitwiseXor | 
                 Precedence::BitwiseAnd | 
@@ -927,13 +814,7 @@ impl Parser {
                         TokenType::InstanceOf => BinaryOperator::InstanceOf,
                         _ => {
                             let token = self.previous().unwrap();
-                            return Err(super::error::ParserError::with_token_span(
-                                &format!("Unexpected token: {:?}", token_type),
-                                token.line,
-                                token.column,
-                                token.length,
-                                &self.get_source_text()
-                            ));
+                            return Err(parser_error_at_current!(self, "Unexpected token: {:?}", token_type));
                         }
                     };
                     
@@ -970,39 +851,19 @@ impl Parser {
                     };
                 },
                 Precedence::Call => {
-                    if self.match_token(&TokenType::Dot) {
-                        let property = if let Some(TokenType::Identifier(name)) = self.peek_token_type().cloned() {
-                            self.advance();
-                            name.into_boxed_str()
-                        }
 
-                        else if self.check(&TokenType::Default) {
-                            self.advance();
-                            "default".into()
-                        } else if self.check(&TokenType::Get) {
-                            self.advance();
-                            "get".into()
-                        } else if self.check(&TokenType::Set) {
-                            self.advance();
-                            "set".into()
-                        } else if self.check(&TokenType::From) {
-                            self.advance();
-                            "from".into()
-                        } else if self.check(&TokenType::As) {
-                            self.advance();
-                            "as".into()
-                        } else if self.check(&TokenType::For) {
-                            self.advance();
-                            "for".into()
-                        } else {
-                            return Err(super::error::ParserError::with_token_span(
-                                "Expected property name 3",
-                                self.peek_token().unwrap().line,
-                                self.peek_token().unwrap().column,
-                                self.peek_token().unwrap().length,
-                                &self.get_source_text()
-                            ));
-                        };
+                    //println!("In call {:#?}", self.peek_token_type());
+
+                    if self.match_token(&TokenType::Dot) {
+
+                        let property = self.with_context(LexicalContext::MemberAccess, |parser| {
+                            let property = if let Some(TokenType::Identifier(name)) = parser.peek_token_type().cloned() {
+                                parser.advance();
+                                return Ok(name.into_boxed_str())
+                            } else {
+                                return Err(parser_error_at_current!(parser, "Expected property name 3"));
+                            };
+                        })?;
                         
                         expr = Expression::Member {
                             object: Box::new(expr),
@@ -1011,6 +872,7 @@ impl Parser {
                             optional: false,
                         };
                     } else if self.match_token(&TokenType::LeftBracket) {
+                        //println!("This case");
                         // Member access with bracket notation
                         let property = self.parse_expression()?;
                         self.consume(&TokenType::RightBracket, "Expected ']' after computed property")?;
@@ -1067,7 +929,7 @@ impl Parser {
                             }
                         }
                         
-                        self.consume(&TokenType::RightParen, "Expected ')' after arguments")?;
+                        self.consume(&TokenType::RightParen, "Expected ')' after arguments 2")?;
                         
                         expr = Expression::Call {
                             callee: Box::new(expr),
@@ -1084,5 +946,17 @@ impl Parser {
 
         Ok(expr)
     }
+
+    // TODO remove need for this flatten in place when processing comma
+//    fn flatten_sequence(&self, exprs: Vec<Expression>) -> Vec<Expression> {
+//        let mut flattened = Vec::new();
+//        for expr in exprs {
+//            match expr {
+//                Expression::Sequence(seq) => flattened.extend(self.flatten_sequence(seq)),
+//                _ => flattened.push(expr),
+//            }
+//        }
+//        flattened
+//    }
 
 }
