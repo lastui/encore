@@ -2,34 +2,35 @@ use super::prelude::*;
 
 
 use crate::ast::*;
-use crate::lexer::{TokenType, LexicalContext};
+use crate::lexer::{Token, LexicalContext};
 use super::error::ParseResult;
 use super::core::Parser;
 
 impl Parser {
 
     pub fn parse_pattern(&mut self) -> ParseResult<Expression> {
-        match self.peek_token_type() {
+        match self.peek() {
             // Identifier pattern
-            Some(TokenType::Identifier(_)) => {
+            Some(Token::Identifier(_)) => {
                 let name = self.expect_identifier("Expected identifier in pattern")?;
                 Ok(Expression::Identifier(name))
             },
             // Object pattern: { x, y }
-            Some(TokenType::LeftBrace) => {
+            Some(Token::LeftBrace) => {
+                println!("In pattern");
                 self.advance(); // consume '{'
                 
                 let mut properties = Vec::new();
                 
-                if !self.check(&TokenType::RightBrace) {
+                if !self.check(&Token::RightBrace) {
                     loop {
-                        if self.match_token(&TokenType::Ellipsis) {
+                        if self.match_token(&Token::Ellipsis) {
                             // Rest element
                             let argument = self.parse_pattern()?;
                             properties.push(ObjectProperty::Spread(argument));
                             
                             // Rest element must be the last one
-                            if !self.check(&TokenType::RightBrace) {
+                            if !self.check(&Token::RightBrace) {
                                 return Err(parser_error_at_current!(self, "Rest element must be the last element in object pattern"));
                             }
                             break;
@@ -40,13 +41,13 @@ impl Parser {
                             })?;
                             
                             // Handle shorthand: { x }
-                            let (value, computed, shorthand) = if !self.check(&TokenType::Colon) {
+                            let (value, computed, shorthand) = if !self.check(&Token::Colon) {
                                 if let PropertyKey::Identifier(name) = &key {
                                     // Shorthand property: { x }
                                     let pattern = Expression::Identifier(name.clone());
                                     
                                     // Check for default value: { x = 1 }
-                                    if self.match_token(&TokenType::Equal) {
+                                    if self.match_token(&Token::Equal) {
                                         let default = self.parse_expression()?;
                                         (Expression::Assignment {
                                             operator: AssignmentOperator::Assign,
@@ -65,7 +66,7 @@ impl Parser {
                                 let pattern = self.parse_pattern()?;
                                 
                                 // Check for default value: { key: value = 1 }
-                                if self.match_token(&TokenType::Equal) {
+                                if self.match_token(&Token::Equal) {
                                     let default = self.parse_expression()?;
                                     (Expression::Assignment {
                                         operator: AssignmentOperator::Assign,
@@ -86,42 +87,42 @@ impl Parser {
                             });
                         }
                         
-                        if !self.match_token(&TokenType::Comma) {
+                        if !self.match_token(&Token::Comma) {
                             break;
                         }
                         
                         // Handle trailing comma
-                        if self.check(&TokenType::RightBrace) {
+                        if self.check(&Token::RightBrace) {
                             break;
                         }
                     }
                 }
                 
-                self.consume(&TokenType::RightBrace, "Expected '}' after object pattern")?;
+                self.consume(&Token::RightBrace, "Expected '}' after object pattern")?;
                 
                 Ok(Expression::Object(properties))
             },
             
             // Array pattern: [x, y, z = 1]
-            Some(TokenType::LeftBracket) => {
+            Some(Token::LeftBracket) => {
                 self.advance(); // consume '['
                 
                 let mut elements = Vec::new();
                 
-                while !self.check(&TokenType::RightBracket) && !self.is_at_end() {
-                    if self.match_token(&TokenType::Comma) {
+                while !self.check(&Token::RightBracket) && !self.is_at_end() {
+                    if self.match_token(&Token::Comma) {
                         // Elision (hole)
                         elements.push(ArrayElement::Hole);    // TODO could use 
                     } else {
-                        if self.match_token(&TokenType::Ellipsis) {
+                        if self.match_token(&Token::Ellipsis) {
                             // Rest element
                             let argument = self.parse_pattern()?;
                             elements.push(ArrayElement::Spread(Expression::Spread(Box::new(argument))));
                             
                             // Rest element must be the last one
-                            if !self.check(&TokenType::RightBracket) {
-                                if self.match_token(&TokenType::Comma) {
-                                    if !self.check(&TokenType::RightBracket) {
+                            if !self.check(&Token::RightBracket) {
+                                if self.match_token(&Token::Comma) {
+                                    if !self.check(&Token::RightBracket) {
                                         return Err(parser_error_at_current!(self, "Rest element must be the last element in array pattern"));
                                     }
                                 } else {
@@ -134,7 +135,7 @@ impl Parser {
                             let pattern = self.parse_pattern()?;
                             
                             // Check for default value: [x = 1]
-                            if self.match_token(&TokenType::Equal) {
+                            if self.match_token(&Token::Equal) {
                                 let default = self.parse_expression()?;
                                 elements.push(ArrayElement::Expression(Expression::Assignment {
                                     operator: AssignmentOperator::Assign,
@@ -146,13 +147,13 @@ impl Parser {
                             }
                         }
                         
-                        if !self.check(&TokenType::RightBracket) {
-                            self.consume(&TokenType::Comma, "Expected ',' after array pattern element")?;
+                        if !self.check(&Token::RightBracket) {
+                            self.consume(&Token::Comma, "Expected ',' after array pattern element")?;
                         }
                     }
                 }
                 
-                self.consume(&TokenType::RightBracket, "Expected ']' after array pattern")?;
+                self.consume(&Token::RightBracket, "Expected ']' after array pattern")?;
                 
                 Ok(Expression::Array(elements))
             },

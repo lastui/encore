@@ -1,21 +1,19 @@
 use super::prelude::*;
 
-
 use crate::ast::*;
-use crate::lexer::{Token, TokenType, LexicalContext};
-use super::error::{ParserError, ParseResult};
+use crate::lexer::{Token, LexicalContext};
+use super::error::ParseResult;
 use super::core::Parser;
 
 impl Parser {
 
    // Variable declarations
     pub fn parse_variable_declaration(&mut self) -> ParseResult<VariableDeclaration> {
-        let token = self.advance().cloned().unwrap_or_else(|| Token::new(TokenType::EOF, 0, 0, 0));
         
-        let kind = match token.token_type {
-            TokenType::Var => VariableKind::Var,
-            TokenType::Let => VariableKind::Let,
-            TokenType::Const => VariableKind::Const,
+        let kind = match self.advance() {
+            Some(Token::Var) => VariableKind::Var,
+            Some(Token::Let) => VariableKind::Let,
+            Some(Token::Const) => VariableKind::Const,
             _ => unreachable!(),
         };
         
@@ -23,16 +21,17 @@ impl Parser {
         let mut declarations = vec![self.parse_variable_declarator()?];
         
         // Parse additional declarators separated by commas
-        while self.match_token(&TokenType::Comma) {
+        while self.match_token(&Token::Comma) {
             declarations.push(self.parse_variable_declarator()?);
         }
 
         // Consume semicolon unless we're in a for-in/of loop context
-        let current_context = self.current_context();
-        let is_in_loop_parameters = matches!(current_context, LexicalContext::LoopParameters);
-        
-        if !is_in_loop_parameters {
-            self.consume(&TokenType::Semicolon, "Expected ';' after variable declaration")?;
+        //let current_context = self.current_context();
+        //let is_in_loop_parameters = matches!(current_context, LexicalContext::LoopParameters);
+
+
+        if !self.is_in_loop_parameters() {
+            self.consume(&Token::Semicolon, "Expected ';' after variable declaration")?;
         }
         
         Ok(VariableDeclaration { declarations, kind })
@@ -40,47 +39,62 @@ impl Parser {
 
 
     pub fn parse_statement(&mut self) -> ParseResult<Statement> {
-        match self.peek_token_type() {
+        match self.peek() {
             // Empty statement (just a semicolon)
-            Some(TokenType::Semicolon) => {
+            Some(Token::Semicolon) => {
                 self.advance();
                 Ok(Statement::Empty)
             },
 
-            // Block statement { ... }
-            Some(TokenType::LeftBrace) => self.parse_block(),
+            // Block statement or literal object expression { ... } 
+            Some(Token::LeftBrace) => {
+                match self.peek_previous() {
+                    Some(Token::RightParen) => self.parse_block(),
+                    _ => match self.peek_next(1) {
+                        Some(Token::RightBrace) | Some(Token::LeftBracket) | Some(Token::Ellipsis) => self.parse_expression_statement(),
+                        Some(Token::Identifier(_)) | Some(Token::StringLiteral(_)) => {
+                            if let Some(Token::Colon) = self.peek_next(2) {
+                                self.parse_expression_statement()
+                            } else {
+                                self.parse_block()
+                            }
+                        }
+                        _ => self.parse_block(),
+                    },
+                }
+            },
             
             // Declaration statements
-            Some(TokenType::Var) | Some(TokenType::Let) | Some(TokenType::Const) => self.parse_variable_statement(),
-            Some(TokenType::Function) =>  self.parse_function_statement(),
-            Some(TokenType::Class) =>  self.parse_class_statement(),
+            Some(Token::Var) | Some(Token::Let) | Some(Token::Const) => self.parse_variable_statement(),
+            Some(Token::Function) =>  self.parse_function_statement(),
+            Some(Token::Class) =>  self.parse_class_statement(),
             
             // Control flow statements
-            Some(TokenType::If) => self.parse_if(),
-            Some(TokenType::Switch) => self.parse_switch(),
-            Some(TokenType::For) => self.parse_for(),
-            Some(TokenType::While) => self.parse_while(),
-            Some(TokenType::Do) => self.parse_do_while(),
+            Some(Token::If) => self.parse_if(),
+            Some(Token::Switch) => self.parse_switch(),
+            Some(Token::For) => self.parse_for(),
+            Some(Token::While) => self.parse_while(),
+            Some(Token::Do) => self.parse_do_while(),
             
             // Exception handling
-            Some(TokenType::Try) => self.parse_try(),
-            Some(TokenType::Throw) => self.parse_throw(),
+            Some(Token::Try) => self.parse_try(),
+            Some(Token::Throw) => self.parse_throw(),
             
             // Function control
-            Some(TokenType::Return) => self.parse_return(),
-            Some(TokenType::Break) => self.parse_break(),
-            Some(TokenType::Continue) => self.parse_continue(),
+            Some(Token::Return) => self.parse_return(),
+            Some(Token::Break) => self.parse_break(),
+            Some(Token::Continue) => self.parse_continue(),
             
             // Module statements
-            Some(TokenType::Import) => self.parse_import_statement(),
-            Some(TokenType::Export) => self.parse_export_statement(),
+            Some(Token::Import) => self.parse_import_statement(),
+            Some(Token::Export) => self.parse_export_statement(),
             
             // Other statements
-            Some(TokenType::With) => self.parse_with(),
-            Some(TokenType::Debugger) => self.parse_debugger(),
+            Some(Token::With) => self.parse_with(),
+            Some(Token::Debugger) => self.parse_debugger(),
             
             // Labeled statement
-            Some(TokenType::Identifier(_)) if self.is_label() => self.parse_labeled(),
+            Some(Token::Identifier(_)) if self.is_label() => self.parse_labeled(),
             
             // Default: expression statement
             _ => self.parse_expression_statement(),
@@ -89,15 +103,15 @@ impl Parser {
 
     /// Parse a block statement: { statements... }
     fn parse_block(&mut self) -> ParseResult<Statement> {
-        self.consume(&TokenType::LeftBrace, "Expected '{'")?;
+        self.consume(&Token::LeftBrace, "Expected '{'")?;
         
         let mut statements = Vec::new();
         
-        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
             statements.push(self.parse_statement()?);
         }
         
-        self.consume(&TokenType::RightBrace, "Expected '}'")?;
+        self.consume(&Token::RightBrace, "Expected '}'")?;
         
         Ok(Statement::Block(statements))
     }
@@ -123,13 +137,13 @@ impl Parser {
     /// Parse if statement: if (condition) consequent else alternate
     fn parse_if(&mut self) -> ParseResult<Statement> {
         self.advance(); // consume 'if'
-        self.consume(&TokenType::LeftParen, "Expected '(' after 'if'")?;
+        self.consume(&Token::LeftParen, "Expected '(' after 'if'")?;
         
         let test = self.parse_expression()?;
-        self.consume(&TokenType::RightParen, "Expected ')' after if condition")?;
+        self.consume(&Token::RightParen, "Expected ')' after if condition")?;
         
         let consequent = Box::new(self.parse_statement()?);
-        let alternate = self.match_token(&TokenType::Else)
+        let alternate = self.match_token(&Token::Else)
             .then(|| self.parse_statement().map(Box::new))
             .transpose()?;
         
@@ -138,24 +152,24 @@ impl Parser {
 
     /// Parse a single case in a switch statement
     fn parse_switch_case(&mut self) -> ParseResult<SwitchCase> {
-        let test = if self.match_token(&TokenType::Case) {
+        let test = if self.match_token(&Token::Case) {
             // After 'case', we expect an expression
             Some(self.parse_expression()?)
-        } else if self.match_token(&TokenType::Default) {
+        } else if self.match_token(&Token::Default) {
             None
         } else {
-            println!("Current token {:#?}", self.peek_token());
+            println!("Current token {:#?}", self.peek());
             return Err(parser_error_at_current!(self, "Expected 'case' or 'default'"));
         };
         
-        self.consume(&TokenType::Colon, "Expected ':' after case value")?;
+        self.consume(&Token::Colon, "Expected ':' after case value")?;
         
         let mut consequent = Vec::new();
         
         // Parse statements until next case, default, or end of switch
-        while !self.check(&TokenType::Case) && 
-              !self.check(&TokenType::Default) && 
-              !self.check(&TokenType::RightBrace) && 
+        while !self.check(&Token::Case) && 
+              !self.check(&Token::Default) && 
+              !self.check(&Token::RightBrace) && 
               !self.is_at_end() {
             consequent.push(self.parse_statement()?);
         }
@@ -170,12 +184,12 @@ impl Parser {
         let block = Box::new(self.parse_block()?);
         
         // Parse optional catch clause
-        let handler = self.match_token(&TokenType::Catch)
+        let handler = self.match_token(&Token::Catch)
             .then(|| self.parse_catch_clause())
             .transpose()?;
         
         // Parse optional finally clause
-        let finalizer = self.match_token(&TokenType::Finally)
+        let finalizer = self.match_token(&Token::Finally)
             .then(|| self.parse_block().map(Box::new))
             .transpose()?;
         
@@ -190,12 +204,12 @@ impl Parser {
     /// Parse catch clause: catch ([param]) block
     fn parse_catch_clause(&mut self) -> ParseResult<CatchClause> {
         // Optional catch parameter
-        let param = self.match_token(&TokenType::LeftParen)
+        let param = self.match_token(&Token::LeftParen)
             .then(|| {
                 // Attempt to parse the parameter identifier
-                if let Some(TokenType::Identifier(name)) = self.peek_token_type().cloned() {
+                if let Some(Token::Identifier(name)) = self.peek().cloned() {
                     self.advance(); // Consume the identifier
-                    self.consume(&TokenType::RightParen, "Expected ')' after catch parameter")?;
+                    self.consume(&Token::RightParen, "Expected ')' after catch parameter")?;
                     Ok(Expression::Identifier(name.into_boxed_str()))
                 } else {
                     // If not an identifier, it's an error
@@ -212,7 +226,7 @@ impl Parser {
 
     /// Parse throw statement: throw expression;
     fn parse_throw(&mut self) -> ParseResult<Statement> {
-        let token = self.advance().cloned().unwrap(); // consume 'throw'
+        self.advance(); // consume 'throw'
         
         // No line terminator allowed between throw and expression
         if self.previous_line_terminator() {
@@ -220,7 +234,7 @@ impl Parser {
         }
         
         let expr = self.parse_expression()?;
-        self.consume(&TokenType::Semicolon, "Expected ';' after throw statement")?;
+        self.consume(&Token::Semicolon, "Expected ';' after throw statement")?;
         
         Ok(Statement::Throw(expr))
     }
@@ -234,11 +248,11 @@ impl Parser {
             return Err(parser_error_at_current!(self, "'with' statements are not allowed in strict mode"));
         }
         
-        self.consume(&TokenType::LeftParen, "Expected '(' after 'with'")?;
+        self.consume(&Token::LeftParen, "Expected '(' after 'with'")?;
         
         let object = self.parse_expression()?;
         
-        self.consume(&TokenType::RightParen, "Expected ')' after with expression")?;
+        self.consume(&Token::RightParen, "Expected ')' after with expression")?;
         
         let body = Box::new(self.parse_statement()?);
         
@@ -249,18 +263,16 @@ impl Parser {
     fn parse_debugger(&mut self) -> ParseResult<Statement> {
         self.advance(); // consume 'debugger'
         
-        self.consume(&TokenType::Semicolon, "Expected ';' after debugger statement")?;
+        self.consume(&Token::Semicolon, "Expected ';' after debugger statement")?;
         
         Ok(Statement::Debugger)
     }
 
     /// Parse labeled statement: identifier: statement
     fn parse_labeled(&mut self) -> ParseResult<Statement> {
-        let token = self.advance().cloned().unwrap();
         let label = self.expect_identifier("Expected label name")?;
-
         
-        self.consume(&TokenType::Colon, "Expected ':' after label")?;
+        self.consume(&Token::Colon, "Expected ':' after label")?;
         
         // Add label to the set of active labels
         let label_exists = !self.state.labels.insert(label.clone());
@@ -279,10 +291,9 @@ impl Parser {
 
     /// Check if the current token is a label
     fn is_label(&self) -> bool {
-        // Check if the current token is an identifier and the next token is a colon
-        if let Some(TokenType::Identifier(_)) = self.peek_token_type() {
-            if let Some(next_token) = self.tokens.get(self.current + 1) {
-                return matches!(next_token.token_type, TokenType::Colon);
+        if let Some(Token::Identifier(_)) = self.peek() {
+            if let Some(next_token) = self.peek_next(1) {
+                return matches!(next_token, Token::Colon);
             }
         }
         false
@@ -302,13 +313,15 @@ impl Parser {
         let is_directive = if let Expression::Literal(Literal::String(_)) = &expr {
             // Only consider as directive if it's at the beginning of a function/program
             // and is a simple string literal (not an expression)
-            start_pos == 0 || self.previous().unwrap().token_type == TokenType::LeftBrace
+            start_pos == 0 || self.peek_previous().unwrap() == &Token::LeftBrace
         } else {
             false
         };
 
-        self.consume(&TokenType::Semicolon, "Expected ';' after expression statement")?;
-        
+        if !self.is_in_loop_parameters() {
+            self.consume(&Token::Semicolon, "Expected ';' after expression statement")?;
+        }
+
         // If this is a "use strict" directive, update parser state
         if is_directive {
             if let Expression::Literal(Literal::String(value)) = &expr {
@@ -325,19 +338,19 @@ impl Parser {
     /// Parse switch statement: switch (discriminant) { case/default... }
     fn parse_switch(&mut self) -> ParseResult<Statement> {  
         self.advance(); // consume 'switch'  
-        self.consume(&TokenType::LeftParen, "Expected '(' after 'switch'")?;  
+        self.consume(&Token::LeftParen, "Expected '(' after 'switch'")?;  
           
         let discriminant = self.parse_expression()?;  
-        self.consume(&TokenType::RightParen, "Expected ')' after switch expression")?;  
+        self.consume(&Token::RightParen, "Expected ')' after switch expression")?;  
           
-        self.consume(&TokenType::LeftBrace, "Expected '{' before switch cases")?;  
+        self.consume(&Token::LeftBrace, "Expected '{' before switch cases")?;  
           
         // Use SwitchBody context instead of state flag
         let cases = self.with_context(LexicalContext::SwitchBody, |parser| {
             let mut inner_cases = Vec::new();  
             let mut has_default = false;  
               
-            while !parser.check(&TokenType::RightBrace) && !parser.is_at_end() {  
+            while !parser.check(&Token::RightBrace) && !parser.is_at_end() {  
                 let case = parser.parse_switch_case()?;  
                   
                 // Validate only one default case  
@@ -354,7 +367,7 @@ impl Parser {
             Ok(inner_cases)
         })?;
           
-        self.consume(&TokenType::RightBrace, "Expected '}' after switch cases")?;  
+        self.consume(&Token::RightBrace, "Expected '}' after switch cases")?;  
           
         Ok(Statement::Switch { discriminant, cases })  
     }
@@ -362,10 +375,10 @@ impl Parser {
     /// Parse while statement: while (test) statement
     fn parse_while(&mut self) -> ParseResult<Statement> {
         self.advance(); // consume 'while'
-        self.consume(&TokenType::LeftParen, "Expected '(' after 'while'")?;
+        self.consume(&Token::LeftParen, "Expected '(' after 'while'")?;
         
         let test = self.parse_expression()?;
-        self.consume(&TokenType::RightParen, "Expected ')' after while condition")?;
+        self.consume(&Token::RightParen, "Expected ')' after while condition")?;
         
         // Use LoopBody context instead of state flag
         let body = self.with_context(LexicalContext::LoopBody, |parser| {
@@ -384,28 +397,28 @@ impl Parser {
             parser.parse_statement().map(Box::new)
         })?;
         
-        self.consume(&TokenType::While, "Expected 'while' after do block")?;
-        self.consume(&TokenType::LeftParen, "Expected '(' after 'while'")?;
+        self.consume(&Token::While, "Expected 'while' after do block")?;
+        self.consume(&Token::LeftParen, "Expected '(' after 'while'")?;
         
         let test = self.parse_expression()?;
         
-        self.consume(&TokenType::RightParen, "Expected ')' after while condition")?;
-        self.consume(&TokenType::Semicolon, "Expected ';' after do-while statement")?;
+        self.consume(&Token::RightParen, "Expected ')' after while condition")?;
+        self.consume(&Token::Semicolon, "Expected ';' after do-while statement")?;
         
         Ok(Statement::Loop(LoopStatement::DoWhile { body, test }))
     }
 
     /// Parse break statement: break [label];
     fn parse_break(&mut self) -> ParseResult<Statement> {
-        let token = self.advance().cloned().unwrap(); // consume 'break'
+        self.advance(); // consume 'break'
 
-        if !self.is_in_loop() && !self.is_in_switch() {
+        if !self.is_in_loop_body() && !self.is_in_switch() {
             return Err(parser_error_at_current!(self, "'break' statement outside of loop or switch"));
         }
         
         // Optional label
-        let label = if !self.check(&TokenType::Semicolon) && !self.previous_line_terminator() {
-            if let Some(TokenType::Identifier(name)) = self.peek_token().map(|t| &t.token_type).cloned() {
+        let label = if !self.check(&Token::Semicolon) && !self.previous_line_terminator() {
+            if let Some(Token::Identifier(name)) = self.peek().cloned() {
                 self.advance();
                 
                 // Verify label exists
@@ -422,23 +435,23 @@ impl Parser {
             None
         };
         
-        self.consume(&TokenType::Semicolon, "Expected ';' after break statement")?;
+        self.consume(&Token::Semicolon, "Expected ';' after break statement")?;
         
         Ok(Statement::Break(label))
     }
     
     /// Parse continue statement: continue [label];
     fn parse_continue(&mut self) -> ParseResult<Statement> {
-        let token = self.advance().cloned().unwrap(); // consume 'continue'
+        self.advance(); // consume 'continue'
          
         // Check if we're in a loop using context method
-        if !self.is_in_loop() {
+        if !self.is_in_loop_body() {
             return Err(parser_error_at_current!(self, "'continue' statement outside of loop"));
         }
         
         // Optional label
-        let label = if !self.check(&TokenType::Semicolon) && !self.previous_line_terminator() {
-            if let Some(TokenType::Identifier(name)) = self.peek_token().map(|t| &t.token_type).cloned() {
+        let label = if !self.check(&Token::Semicolon) && !self.previous_line_terminator() {
+            if let Some(Token::Identifier(name)) = self.peek().cloned() {
                 self.advance();
                 
                 // Verify label exists
@@ -455,14 +468,14 @@ impl Parser {
             None
         };
         
-        self.consume(&TokenType::Semicolon, "Expected ';' after continue statement")?;
+        self.consume(&Token::Semicolon, "Expected ';' after continue statement")?;
         
         Ok(Statement::Continue(label))
     }
 
     /// Parse return statement: return [expression];
     fn parse_return(&mut self) -> ParseResult<Statement> {
-        let token = self.advance().cloned().unwrap(); // consume 'return'
+        self.advance(); // consume 'return'
         
          // Check if we're in a function using context method
         if !self.is_in_function() {
@@ -470,14 +483,14 @@ impl Parser {
         }
         
         // Return with no value if semicolon or end of block
-        let argument = (!self.check(&TokenType::Semicolon) && 
-                        !self.check(&TokenType::RightBrace) && 
+        let argument = (!self.check(&Token::Semicolon) && 
+                        !self.check(&Token::RightBrace) && 
                         !self.is_at_end() && 
                         !self.previous_line_terminator())
             .then(|| self.parse_expression())
             .transpose()?;
         
-        self.consume(&TokenType::Semicolon, "Expected ';' after return statement")?;
+        self.consume(&Token::Semicolon, "Expected ';' after return statement")?;
         
         Ok(Statement::Return(argument))
     }
@@ -486,293 +499,244 @@ impl Parser {
     fn parse_for(&mut self) -> ParseResult<Statement> {
         self.advance(); // consume 'for'
         
+        //println!("In for loop construct");
+
         // Check for for-await-of
-        let is_await = self.match_token(&TokenType::Await);
+        let is_await = self.match_token(&Token::Await);
         
-        self.consume(&TokenType::LeftParen, "Expected '(' after 'for'")?;
+        self.consume(&Token::LeftParen, "Expected '(' after 'for'")?;
         
-        // Parse initialization with LoopParameters context
         let result = self.with_context(LexicalContext::LoopParameters, |parser| {
-            // ... existing for loop parsing code ...
-            if parser.match_token(&TokenType::Semicolon) {
-                // No initialization - standard for loop with empty init
-                // Parse condition
-                let test = (!parser.check(&TokenType::Semicolon))
+            if parser.check(&Token::Semicolon) {
+                parser.consume(&Token::Semicolon, "Expected ';' after for init")?;
+
+                let test = (!parser.check(&Token::Semicolon))
                     .then(|| parser.parse_expression())
                     .transpose()?;
-                    
-                parser.consume(&TokenType::Semicolon, "Expected ';' after for condition")?;
-                
-                // Parse update
-                let update = (!parser.check(&TokenType::RightParen))
+
+                parser.consume(&Token::Semicolon, "Expected ';' after for test")?;
+
+                let update = (!parser.check(&Token::Semicolon))
                     .then(|| parser.parse_expression())
                     .transpose()?;
-                    
-                parser.consume(&TokenType::RightParen, "Expected ')' after for clauses")?;
-                
-                // Parse body with LoopBody context
+
+                parser.consume(&Token::RightParen, "Expected ')' after 'for'")?;
                 let body = parser.with_context(LexicalContext::LoopBody, |p| {
                     p.parse_statement().map(Box::new)
                 })?;
-                
+
                 Ok(LoopStatement::For { 
                     init: None, 
                     test, 
                     update, 
                     body 
                 })
-            } else if parser.check(&TokenType::Var) || parser.check(&TokenType::Let) || parser.check(&TokenType::Const) {
-                // Variable declaration initialization
-                let decl = parser.parse_variable_declaration()?;
-                
-                // Check for for-in or for-of
-                if parser.check(&TokenType::In) {
-                    // for-in loop with variable declaration
-                    parser.advance(); // consume 'in'
-                    let right = parser.parse_expression()?;
-                    parser.consume(&TokenType::RightParen, "Expected ')' after for-in right-hand side")?;
-                    
-                    // Parse body with LoopBody context
-                    let body = parser.with_context(LexicalContext::LoopBody, |p| {
-                        p.parse_statement().map(Box::new)
-                    })?;
-                    
-                    Ok(LoopStatement::ForIn { 
-                        left: ForInOfLeft::Declaration(decl), 
-                        right, 
-                        body 
-                    })
-                } else if parser.check(&TokenType::Of) {
-                    // for-of loop with variable declaration
-                    parser.advance(); // consume 'of'
-                    let right = parser.parse_expression()?;
-                    parser.consume(&TokenType::RightParen, "Expected ')' after for-of right-hand side")?;
-                    
-                    // Parse body with LoopBody context
-                    let body = parser.with_context(LexicalContext::LoopBody, |p| {
-                        p.parse_statement().map(Box::new)
-                    })?;
-                    
-                    Ok(LoopStatement::ForOf { 
-                        left: ForInOfLeft::Declaration(decl), 
-                        right, 
-                        body, 
-                        is_await 
-                    })
-                } else {
-                    // Standard for loop with variable declaration
-                    parser.consume(&TokenType::Semicolon, "Expected ';' after for initialization")?;
-                    
-                    // Parse condition
-                    let test = (!parser.check(&TokenType::Semicolon))
-                        .then(|| parser.parse_expression())
-                        .transpose()?;
-                        
-                    parser.consume(&TokenType::Semicolon, "Expected ';' after for condition")?;
-                    
-                    // Parse update
-                    let update = (!parser.check(&TokenType::RightParen))
-                        .then(|| parser.parse_expression())
-                        .transpose()?;
-                        
-                    parser.consume(&TokenType::RightParen, "Expected ')' after for clauses")?;
-                    
-                    // Parse body with LoopBody context
-                    let body = parser.with_context(LexicalContext::LoopBody, |p| {
-                        p.parse_statement().map(Box::new)
-                    })?;
-                    
-                    Ok(LoopStatement::For { 
-                        init: Some(ForInit::Variable(decl)), 
-                        test, 
-                        update, 
-                        body 
-                    })
+            } else if parser.check(&Token::Var) || parser.check(&Token::Let) || parser.check(&Token::Const) {
+
+                //println!("- with initialization");
+
+                let init = parser.parse_variable_declaration()?;
+
+                match parser.advance() {
+                    Some(&Token::In) => {
+                        let right = parser.parse_expression()?;
+                        parser.consume(&Token::RightParen, "Expected ')' after 'for'")?;
+                        let body = parser.with_context(LexicalContext::LoopBody, |p| {
+                            p.parse_statement().map(Box::new)
+                        })?;
+                        Ok(LoopStatement::ForIn { 
+                            left: ForInit::Declaration(init), 
+                            right, 
+                            body 
+                        })
+                    },
+                    Some(&Token::Of) => {
+                        let right = parser.parse_expression()?;
+                        parser.consume(&Token::RightParen, "Expected ')' after 'for'")?;
+                        let body = parser.with_context(LexicalContext::LoopBody, |p| {
+                            p.parse_statement().map(Box::new)
+                        })?;
+
+                        Ok(LoopStatement::ForOf { 
+                            left: ForInit::Declaration(init), 
+                            right, 
+                            body,
+                            is_await 
+                        })
+                    },
+                    _ => {
+
+                        //println!("- as classical loop");
+
+                        let test = (!parser.check(&Token::Semicolon))
+                            .then(|| parser.parse_expression())
+                            .transpose()?;
+
+                        parser.consume(&Token::Semicolon, "Expected ';' after for test")?;
+
+                        let update = (!parser.check(&Token::RightParen))
+                            .then(|| parser.parse_expression())
+                            .transpose()?;
+
+                        parser.consume(&Token::RightParen, "Expected ')' after 'for'")?;
+                        let body = parser.with_context(LexicalContext::LoopBody, |p| {
+                            p.parse_statement().map(Box::new)
+                        })?;
+
+                        Ok(LoopStatement::For { 
+                            init: Some(ForInit::Declaration(init)), 
+                            test, 
+                            update, 
+                            body 
+                        })
+                    },
                 }
-            } else if let Some(TokenType::Identifier(_)) = parser.peek_token_type() {
-                // ... existing identifier handling code ...
-                // First, check if the next tokens form a for-in or for-of loop
-                // Save current position to backtrack if needed
-                let start_pos = parser.current;
+
+            } else if let Some(Token::Identifier(_)) = parser.peek() {
                 
-                // Parse the identifier
-                let token = parser.advance().unwrap().clone();
-                let name = parser.expect_identifier("Expected label name")?;
-                let left = Expression::Identifier(name);
-                
-                // Check what follows the identifier
-                if parser.check(&TokenType::In) {
-                    // for-in loop with identifier
-                    parser.advance(); // consume 'in'
-                    let right = parser.parse_expression()?;
-                    parser.consume(&TokenType::RightParen, "Expected ')' after for-in right-hand side")?;
-                    
-                    // Parse body with LoopBody context
-                    let body = parser.with_context(LexicalContext::LoopBody, |p| {
-                        p.parse_statement().map(Box::new)
-                    })?;
-                    
-                    Ok(LoopStatement::ForIn { 
-                        left: ForInOfLeft::Pattern(left), 
-                        right, 
-                        body 
-                    })
-                } else if parser.check(&TokenType::Of) {
-                    // for-of loop with identifier
-                    parser.advance(); // consume 'of'
-                    let right = parser.parse_expression()?;
-                    parser.consume(&TokenType::RightParen, "Expected ')' after for-of right-hand side")?;
-                    
-                    // Parse body with LoopBody context
-                    let body = parser.with_context(LexicalContext::LoopBody, |p| {
-                        p.parse_statement().map(Box::new)
-                    })?;
-                    
-                    Ok(LoopStatement::ForOf { 
-                        left: ForInOfLeft::Pattern(left), 
-                        right,
-                        body, 
-                        is_await 
-                    })
-                } else {
-                    // Not a for-in or for-of loop, so it must be a standard for loop
-                    // Reset position and parse the full initialization expression
-                    parser.current = start_pos;
-                    
-                    // Parse the initialization expression
-                    let init_expr = parser.parse_expression()?;
-                    
-                    parser.consume(&TokenType::Semicolon, "Expected ';' after for initialization")?;
-                    
-                    // Parse condition
-                    let test = (!parser.check(&TokenType::Semicolon))
-                        .then(|| parser.parse_expression())
-                        .transpose()?;
-                        
-                    parser.consume(&TokenType::Semicolon, "Expected ';' after for condition")?;
-                    
-                    // Parse update (which might be empty)
-                    let update = (!parser.check(&TokenType::RightParen))
-                        .then(|| parser.parse_expression())
-                        .transpose()?;
-                        
-                    parser.consume(&TokenType::RightParen, "Expected ')' after for clauses")?;
-                    
-                    // Parse body with LoopBody context
-                    let body = parser.with_context(LexicalContext::LoopBody, |p| {
-                        p.parse_statement().map(Box::new)
-                    })?;
-                    
-                    Ok(LoopStatement::For { 
-                        init: Some(ForInit::Expression(init_expr)), 
-                        test, 
-                        update, 
-                        body 
-                    })
+                match parser.peek_next(1) {
+                    Some(&Token::In) => {
+                        let left = Expression::Identifier(parser.expect_identifier("Expected for init name")?);
+
+                        parser.advance();   // consume 'in'
+
+                        let right = parser.parse_expression()?;
+                        parser.consume(&Token::RightParen, "Expected ')' after 'for'")?;
+                        let body = parser.with_context(LexicalContext::LoopBody, |p| {
+                            p.parse_statement().map(Box::new)
+                        })?;
+                        Ok(LoopStatement::ForIn { 
+                            left: ForInit::Pattern(left), 
+                            right, 
+                            body 
+                        })
+                    },
+                    Some(&Token::Of) => {
+                        let left = Expression::Identifier(parser.expect_identifier("Expected for init name")?);
+
+                        parser.advance();   // consume 'in'
+
+                        let right = parser.parse_expression()?;
+                        parser.consume(&Token::RightParen, "Expected ')' after 'for'")?;
+                        let body = parser.with_context(LexicalContext::LoopBody, |p| {
+                            p.parse_statement().map(Box::new)
+                        })?;
+                        Ok(LoopStatement::ForOf { 
+                            left: ForInit::Pattern(left), 
+                            right, 
+                            body,
+                            is_await 
+                        })
+                    },
+                    _ => {
+                        //println!("classical for loop without initialisation");
+
+                        //println!("current token is {:#?}", parser.peek());
+
+                        let init = (!parser.check(&Token::Semicolon))
+                            .then(|| parser.parse_expression())
+                            .transpose()?;
+
+                        parser.consume(&Token::Semicolon, "Expected ';' after for init")?;
+
+                        let test = (!parser.check(&Token::Semicolon))
+                            .then(|| parser.parse_expression())
+                            .transpose()?;
+
+                        parser.consume(&Token::Semicolon, "Expected ';' after for test")?;
+
+                        //println!("Before I am here on {:#?}", parser.peek());
+
+                        let update = (!parser.check(&Token::RightParen))
+                            .then(|| parser.parse_expression())
+                            .transpose()?;
+
+
+                        //println!("After I am here on {:#?}", parser.peek());
+
+                        parser.consume(&Token::RightParen, "Expected ')' after 'for'")?;
+                        let body = parser.with_context(LexicalContext::LoopBody, |p| {
+                            p.parse_statement().map(Box::new)
+                        })?;
+
+                        Ok(LoopStatement::For { 
+                            init: init.map(|exp| ForInit::Pattern(exp)), 
+                            test, 
+                            update, 
+                            body 
+                        })
+                    },
                 }
             } else {
-                // For other expressions (including array/object literals and complex expressions)
-                // Parse the full initialization expression
-                let init_expr = parser.parse_expression()?;
-                
-                // Check if this is a for-in or for-of loop
-                if parser.check(&TokenType::In) {
-                    // for-in loop with expression
-                    parser.advance(); // consume 'in'
-                    let right = parser.parse_expression()?;
-                    parser.consume(&TokenType::RightParen, "Expected ')' after for-in right-hand side")?;
-                    
-                    // Parse body with LoopBody context
-                    let body = parser.with_context(LexicalContext::LoopBody, |p| {
-                        p.parse_statement().map(Box::new)
-                    })?;
-                    
-                    Ok(LoopStatement::ForIn { 
-                        left: ForInOfLeft::Pattern(init_expr), 
-                        right, 
-                        body 
-                    })
-                } else if parser.check(&TokenType::Of) {
-                    // for-of loop with expression
-                    parser.advance(); // consume 'of'
-                    let right = parser.parse_expression()?;
-                    parser.consume(&TokenType::RightParen, "Expected ')' after for-of right-hand side")?;
-                    
-                    // Parse body with LoopBody context
-                    let body = parser.with_context(LexicalContext::LoopBody, |p| {
-                        p.parse_statement().map(Box::new)
-                    })?;
-                    
-                    Ok(LoopStatement::ForOf { 
-                        left: ForInOfLeft::Pattern(init_expr), 
-                        right, 
-                        body, 
-                        is_await 
-                    })
-                } else {
-                    // Standard for loop with expression initialization
-                    parser.consume(&TokenType::Semicolon, "Expected ';' after for initialization")?;
-                    
-                    // Parse condition
-                    let test = (!parser.check(&TokenType::Semicolon))
-                        .then(|| parser.parse_expression())
-                        .transpose()?;
-                        
-                    parser.consume(&TokenType::Semicolon, "Expected ';' after for condition")?;
-                    
-                    // Parse update (which might be empty)
-                    let update = (!parser.check(&TokenType::RightParen))
-                        .then(|| parser.parse_expression())
-                        .transpose()?;
-                        
-                    parser.consume(&TokenType::RightParen, "Expected ')' after for clauses")?;
-                    
-                    // Parse body with LoopBody context
-                    let body = parser.with_context(LexicalContext::LoopBody, |p| {
-                        p.parse_statement().map(Box::new)
-                    })?;
-                    
-                    Ok(LoopStatement::For { 
-                        init: Some(ForInit::Expression(init_expr)), 
-                        test, 
-                        update, 
-                        body 
-                    })
-                }
-            }
-        })?;
-        
-        Ok(Statement::Loop(result))
-    }
+                //println!("What did happen? {:#?}", parser.peek());
+                //Err(parser_error_at_current!(parser, "unknown for construct"))
 
+
+                let init = (!parser.check(&Token::Semicolon))
+                    .then(|| parser.parse_expression())
+                    .transpose()?;
+
+                parser.consume(&Token::Semicolon, "Expected ';' after for init")?;
+
+                let test = (!parser.check(&Token::Semicolon))
+                    .then(|| parser.parse_expression())
+                    .transpose()?;
+
+                parser.consume(&Token::Semicolon, "Expected ';' after for test")?;
+
+                //println!("Before I am here on {:#?}", parser.peek());
+
+                let update = (!parser.check(&Token::RightParen))
+                    .then(|| parser.parse_expression())
+                    .transpose()?;
+
+
+                //println!("After I am here on {:#?}", parser.peek());
+
+                parser.consume(&Token::RightParen, "Expected ')' after 'for'")?;
+                let body = parser.with_context(LexicalContext::LoopBody, |p| {
+                    p.parse_statement().map(Box::new)
+                })?;
+
+                Ok(LoopStatement::For { 
+                    init: init.map(|exp| ForInit::Pattern(exp)), 
+                    test, 
+                    update, 
+                    body 
+                })
+            }
+
+        })?;
+
+        Ok(Statement::Loop(result))
+
+    }
 
     /// Parse a variable declarator: pattern = initializer
     pub fn parse_variable_declarator(&mut self) -> ParseResult<VariableDeclarator> {
         // Get the current token position for error reporting
-        let start_token = self.peek_token().cloned();
         
+        let is_const = matches!(self.peek(), Some(&Token::Const));
+
+        
+        //println!("1 Now at {:#?}", self.peek());
+
         // Parse the binding pattern (identifier, object pattern, or array pattern)
         let id = self.parse_pattern()?;
         
         // Check if this is a const declaration without an initializer
-        let is_const = if let Some(prev_token) = self.tokens.get(self.current - 2) {
-            matches!(prev_token.token_type, TokenType::Const)
-        } else {
-            false
-        };
+        // TODO fix self.tokens direct access
         
+        //println!("2 Now at {:#?}", self.peek());
+
         // Parse optional initializer
-        let init = if self.match_token(&TokenType::Equal) {
+        let init = if self.match_token(&Token::Equal) {
             // Parse the initializer expression
             Some(self.parse_expression()?)
         } else {
             // Const declarations must have initializers
             if is_const {
-                if let Some(token) = start_token {
-                    return Err(parser_error_at_current!(self, "Missing initializer in const declaration"));
-                } else {
-                    return Err(parser_error_at_current!(self, "Missing initializer in const declaration"));
-                }
+                return Err(parser_error_at_current!(self, "Missing initializer in const declaration"));
             }
             None
         };

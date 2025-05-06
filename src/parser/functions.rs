@@ -1,7 +1,7 @@
 use super::prelude::*;
 
 use crate::ast::*;
-use crate::lexer::{TokenType, LexicalContext};
+use crate::lexer::{Token, LexicalContext};
 use super::error::ParseResult;
 use super::core::Parser;
 
@@ -10,14 +10,14 @@ impl Parser {
     pub fn parse_function_declaration(&mut self) -> ParseResult<FunctionDeclaration> {
         self.advance(); // consume 'function'
         
-        let is_generator = self.match_token(&TokenType::Star);
+        let is_generator = self.match_token(&Token::Star);
         let id = self.expect_identifier("Expected function name")?;
         
         let params = self.parse_function_params()?;
         
-        self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
+        self.consume(&Token::LeftBrace, "Expected '{' before function body")?;
         let body = self.parse_function_body(is_generator, false)?;
-        self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
+        self.consume(&Token::RightBrace, "Expected '}' after function body")?;
         
         Ok(FunctionDeclaration {
             id,
@@ -31,10 +31,10 @@ impl Parser {
     pub fn parse_function_expression(&mut self) -> ParseResult<Expression> {
         self.advance(); // consume 'function'
         
-        let is_generator = self.match_token(&TokenType::Star);
+        let is_generator = self.match_token(&Token::Star);
         
         // Optional function name for function expressions
-        let id = if matches!(self.peek_token_type(), Some(TokenType::Identifier(_))) {
+        let id = if matches!(self.peek(), Some(Token::Identifier(_))) {
             Some(self.expect_identifier("Expected function name")?)
         } else {
             None
@@ -42,9 +42,9 @@ impl Parser {
         
         let params = self.parse_function_params()?;
 
-        self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
+        self.consume(&Token::LeftBrace, "Expected '{' before function body")?;
         let body = self.parse_function_body(is_generator, false)?;
-        self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
+        self.consume(&Token::RightBrace, "Expected '}' after function body")?;
         
         Ok(Expression::Function {
             id,
@@ -59,10 +59,10 @@ impl Parser {
         self.advance(); // consume 'async'
         self.advance(); // consume 'function'
         
-        let is_generator = self.match_token(&TokenType::Star);
+        let is_generator = self.match_token(&Token::Star);
 
         // Optional function name for function expressions
-        let id = if matches!(self.peek_token_type(), Some(TokenType::Identifier(_))) {
+        let id = if matches!(self.peek(), Some(Token::Identifier(_))) {
             Some(self.expect_identifier("Expected function name")?)
         } else {
             None
@@ -70,9 +70,9 @@ impl Parser {
         
         let params = self.parse_function_params()?;
 
-        self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
+        self.consume(&Token::LeftBrace, "Expected '{' before function body")?;
         let body = self.parse_function_body(is_generator, true)?;
-        self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
+        self.consume(&Token::RightBrace, "Expected '}' after function body")?;
         
         Ok(Expression::Function {
             id,
@@ -86,11 +86,9 @@ impl Parser {
     pub fn parse_arrow_function_body(&mut self, params: Vec<Expression>, is_async: bool) -> ParseResult<Expression> {
         // Create a new function body context with appropriate yield/await flags
 
-        let body = if self.check(&TokenType::LeftBrace) {
+        let body = if self.check(&Token::LeftBrace) {
             // Block body
-
             let body = self.parse_function_body(false, is_async)?;
-
             ArrowFunctionBody::Block(body)
         } else {
             // Expression body
@@ -114,16 +112,16 @@ impl Parser {
 
     pub fn parse_async_function_declaration(&mut self) -> ParseResult<FunctionDeclaration> {
         self.advance(); // consume 'async'
-        self.consume(&TokenType::Function, "Expected 'function' after 'async'")?;
+        self.consume(&Token::Function, "Expected 'function' after 'async'")?;
         
-        let is_generator = self.match_token(&TokenType::Star);
+        let is_generator = self.match_token(&Token::Star);
         let id = self.expect_identifier("Expected function name")?;
         
         let params = self.parse_function_params()?;
 
-        self.consume(&TokenType::LeftBrace, "Expected '{' before function body")?;
+        self.consume(&Token::LeftBrace, "Expected '{' before function body")?;
         let body = self.parse_function_body(is_generator, true)?;
-        self.consume(&TokenType::RightBrace, "Expected '}' after function body")?;
+        self.consume(&Token::RightBrace, "Expected '}' after function body")?;
         
         Ok(FunctionDeclaration {
             id,
@@ -135,7 +133,7 @@ impl Parser {
     }
 
     pub fn parse_function_params(&mut self) -> ParseResult<Vec<Expression>> {
-        self.consume(&TokenType::LeftParen, "Expected '(' after function name")?;
+        self.consume(&Token::LeftParen, "Expected '(' after function name")?;
     
         // Create parameter name context with current strict mode
         let param_context = LexicalContext::ParameterName { 
@@ -145,9 +143,9 @@ impl Parser {
         self.with_context(param_context, |parser| {
             let mut params = Vec::new();
             
-            if !parser.check(&TokenType::RightParen) {
+            if !parser.check(&Token::RightParen) {
                 loop {
-                    if parser.match_token(&TokenType::Ellipsis) {
+                    if parser.match_token(&Token::Ellipsis) {
                         // Rest parameter
                         let arg = parser.parse_pattern()?;
                         params.push(Expression::Spread(Box::new(arg)));
@@ -155,17 +153,17 @@ impl Parser {
                     } else {
                         params.push(parser.parse_pattern()?);
                     }
-                    if !parser.match_token(&TokenType::Comma) {
+                    if !parser.match_token(&Token::Comma) {
                         break;
                     }
                     // Handle trailing comma
-                    if parser.check(&TokenType::RightParen) {
+                    if parser.check(&Token::RightParen) {
                         break;
                     }
                 }
             }
             
-            parser.consume(&TokenType::RightParen, "Expected ')' after function parameters")?;
+            parser.consume(&Token::RightParen, "Expected ')' after function parameters")?;
             
             Ok(params)
         })
@@ -175,7 +173,7 @@ impl Parser {
         let function_body_context = LexicalContext::FunctionBody { allow_yield: is_generator, allow_await: is_async };
         self.with_context(function_body_context, |parser| {
             let mut body = Vec::new();
-            while !parser.check(&TokenType::RightBrace) && !parser.is_at_end() {
+            while !parser.check(&Token::RightBrace) && !parser.is_at_end() {
                 body.push(parser.parse_statement()?);
             }
             Ok(body)
@@ -184,9 +182,9 @@ impl Parser {
 
     // Helper method to check if we're looking at an async function
     pub fn is_async_function(&self) -> bool {
-        if let Some(TokenType::Async) = self.peek_token_type() {
-            if let Some(next_token) = self.tokens.get(self.current + 1) {
-                return matches!(next_token.token_type, TokenType::Function);
+        if let Some(Token::Async) = self.peek() {
+            if let Some(next_token) = self.peek_next(1) {
+                return matches!(next_token, Token::Function);
             }
         }
         false

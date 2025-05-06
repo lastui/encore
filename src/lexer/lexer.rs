@@ -1,13 +1,11 @@
 use std::collections::HashSet;
-use crate::lexer::{Token, TokenType, TemplatePart, LexerError};
-
-// TODO Specialized Token Handling for Lexer Optimization
+use crate::lexer::{Token, TemplatePart, LexerError};
 
 pub struct Lexer<'a> {
     source: &'a str,
-    bytes: &'a [u8],  // Direct access to the underlying bytes
+    bytes: &'a [u8],
     source_len: usize,
-    tokens: Vec<Token>,
+    tokens: Vec<(Token, (usize, usize))>,
     start: usize,
     current: usize,
     line: usize,
@@ -18,10 +16,7 @@ pub struct Lexer<'a> {
 
 macro_rules! add_token {
     ($self:expr, $token_type:expr) => {
-        $self.tokens.push(Token::new($token_type, $self.line, $self.column - 1, 1))
-    };
-    ($self:expr, $token_type:expr, $length:expr) => {
-        $self.tokens.push(Token::new($token_type, $self.line, $self.column - $length, $length))
+        $self.tokens.push(($token_type, ($self.line, $self.column)))
     };
 }
 
@@ -42,14 +37,12 @@ impl<'a> Lexer<'a> {
             previous_char: '\0',
         }
     }
-    
+
     #[inline(always)]
-    fn identifier(&mut self) {
-        let start_column = self.column - 1;
-        
+    fn identifier(&mut self) {        
         // Track whether the identifier is all ASCII
         let mut is_all_ascii = true;
-        
+
         // Fast path for identifiers (most common case)
         while !self.is_at_end() {
             if self.current < self.source_len {
@@ -75,7 +68,7 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
             }
-            
+
             // If we reach here, either we're at the end or the next character 
             // is not an identifier character
             if !self.is_at_end() && self.is_alphanumeric(self.peek()) {
@@ -88,10 +81,10 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        
+
         // Calculate the length of the identifier
         let length = self.current - self.start;
-        
+
         // Only check for keywords if the identifier is within the length range of keywords
         // and is all ASCII (since all keywords are ASCII)
         let token_type = if is_all_ascii && length >= 2 && length <= 10 {
@@ -101,87 +94,87 @@ impl<'a> Lexer<'a> {
             // First check by length for faster matching
             match bytes.len() {
                 2 => match bytes {
-                    b"do" => TokenType::Do,
-                    b"if" => TokenType::If,
-                    b"in" => TokenType::In,
-                    b"of" => TokenType::Of,
-                    b"as" => TokenType::As,
+                    b"do" => Token::Do,
+                    b"if" => Token::If,
+                    b"in" => Token::In,
+                    b"of" => Token::Of,
+                    b"as" => Token::As,
                     _ => self.create_identifier_token(),
                 },
                 3 => match bytes {
-                    b"for" => TokenType::For,
-                    b"let" => TokenType::Let,
-                    b"new" => TokenType::New,
-                    b"try" => TokenType::Try,
-                    b"var" => TokenType::Var,
-                    b"get" => TokenType::Get,
-                    b"set" => TokenType::Set,
+                    b"for" => Token::For,
+                    b"let" => Token::Let,
+                    b"new" => Token::New,
+                    b"try" => Token::Try,
+                    b"var" => Token::Var,
+                    b"get" => Token::Get,
+                    b"set" => Token::Set,
                     _ => self.create_identifier_token(),
                 },
                 4 => match bytes {
-                    b"case" => TokenType::Case,
-                    b"else" => TokenType::Else,
-                    b"enum" => TokenType::Enum,
-                    b"from" => TokenType::From,
-                    b"null" => TokenType::Null,
-                    b"this" => TokenType::This,
-                    b"true" => TokenType::True,
-                    b"void" => TokenType::Void,
-                    b"with" => TokenType::With,
-                    b"eval" => TokenType::Eval,
+                    b"case" => Token::Case,
+                    b"else" => Token::Else,
+                    b"enum" => Token::Enum,
+                    b"from" => Token::From,
+                    b"null" => Token::Null,
+                    b"this" => Token::This,
+                    b"true" => Token::True,
+                    b"void" => Token::Void,
+                    b"with" => Token::With,
+                    b"eval" => Token::Eval,
                     _ => self.create_identifier_token(),
                 },
                 5 => match bytes {
-                    b"async" => TokenType::Async,
-                    b"await" => TokenType::Await,
-                    b"break" => TokenType::Break,
-                    b"catch" => TokenType::Catch,
-                    b"class" => TokenType::Class,
-                    b"const" => TokenType::Const,
-                    b"false" => TokenType::False,
-                    b"super" => TokenType::Super,
-                    b"throw" => TokenType::Throw,
-                    b"while" => TokenType::While,
-                    b"yield" => TokenType::Yield,
+                    b"async" => Token::Async,
+                    b"await" => Token::Await,
+                    b"break" => Token::Break,
+                    b"catch" => Token::Catch,
+                    b"class" => Token::Class,
+                    b"const" => Token::Const,
+                    b"false" => Token::False,
+                    b"super" => Token::Super,
+                    b"throw" => Token::Throw,
+                    b"while" => Token::While,
+                    b"yield" => Token::Yield,
                     _ => self.create_identifier_token(),
                 },
                 6 => match bytes {
-                    b"delete" => TokenType::Delete,
-                    b"export" => TokenType::Export,
-                    b"import" => TokenType::Import,
-                    b"public" => TokenType::Public,
-                    b"return" => TokenType::Return,
-                    b"static" => TokenType::Static,
-                    b"switch" => TokenType::Switch,
-                    b"target" => TokenType::Target,
-                    b"typeof" => TokenType::Typeof,
+                    b"delete" => Token::Delete,
+                    b"export" => Token::Export,
+                    b"import" => Token::Import,
+                    b"public" => Token::Public,
+                    b"return" => Token::Return,
+                    b"static" => Token::Static,
+                    b"switch" => Token::Switch,
+                    b"target" => Token::Target,
+                    b"typeof" => Token::Typeof,
                     _ => self.create_identifier_token(),
                 },
                 7 => match bytes {
-                    b"default" => TokenType::Default,
-                    b"extends" => TokenType::Extends,
-                    b"finally" => TokenType::Finally,
-                    b"package" => TokenType::Package,
-                    b"private" => TokenType::Private,
+                    b"default" => Token::Default,
+                    b"extends" => Token::Extends,
+                    b"finally" => Token::Finally,
+                    b"package" => Token::Package,
+                    b"private" => Token::Private,
                     _ => self.create_identifier_token(),
                 },
                 8 => match bytes {
-                    b"continue" => TokenType::Continue,
-                    b"debugger" => TokenType::Debugger,
-                    b"function" => TokenType::Function,
+                    b"continue" => Token::Continue,
+                    b"debugger" => Token::Debugger,
+                    b"function" => Token::Function,
                     _ => self.create_identifier_token(),
                 },
                 9 => match bytes {
-                    b"arguments" => TokenType::Arguments,
-                    b"interface" => TokenType::Interface,
-                    b"protected" => TokenType::Protected,
-                    b"undefined" => TokenType::Undefined,
+                    b"arguments" => Token::Arguments,
+                    b"interface" => Token::Interface,
+                    b"protected" => Token::Protected,
+                    b"undefined" => Token::Undefined,
                     _ => self.create_identifier_token(),
                 },
                 10 => match bytes {
-                    b"instanceof" => TokenType::InstanceOf,
-                    b"implements" => TokenType::Implements,
-                    b"constructor" => TokenType::Constructor,
+                    b"instanceof" => Token::InstanceOf,
+                    b"implements" => Token::Implements,
+                    b"constructor" => Token::Constructor,
                     _ => self.create_identifier_token(),
                 },
                 _ => self.create_identifier_token(),
@@ -192,23 +185,23 @@ impl<'a> Lexer<'a> {
         };
         
         // Add the token
-        add_token!(self, token_type, length as usize);
+        add_token!(self, token_type);
     }
 
     // Helper method to create an identifier token
     #[inline]
-    fn create_identifier_token(&self) -> TokenType {
+    fn create_identifier_token(&self) -> Token {
         let text = &self.source[self.start..self.current];
-        TokenType::Identifier(text.to_string())
+        Token::Identifier(text.to_string())
     }
 
-    pub fn scan_tokens(&mut self) -> Result<Vec<Token>, LexerError> {
+    pub fn scan_tokens(&mut self) -> Result<Vec<(Token, (usize, usize))>, LexerError> {
         while !self.is_at_end() {
             self.start = self.current;
             self.scan_token()?;
         }
         let _eof_column = self.column;
-        add_token!(self, TokenType::EOF, 0);
+        add_token!(self, Token::EOF);
         Ok(std::mem::take(&mut self.tokens))
     }
     
@@ -216,168 +209,168 @@ impl<'a> Lexer<'a> {
         let c = self.advance();
         
         match c {
-            '(' => add_token!(self, TokenType::LeftParen),
-            ')' => add_token!(self, TokenType::RightParen),
-            '{' => add_token!(self, TokenType::LeftBrace),
-            '}' => add_token!(self, TokenType::RightBrace),
-            '[' => add_token!(self, TokenType::LeftBracket),
-            ']' => add_token!(self, TokenType::RightBracket),
-            ',' => add_token!(self, TokenType::Comma),
-            ';' => add_token!(self, TokenType::Semicolon),
-            ':' => add_token!(self, TokenType::Colon),
-            '#' => add_token!(self, TokenType::Hash),
+            '(' => add_token!(self, Token::LeftParen),
+            ')' => add_token!(self, Token::RightParen),
+            '{' => add_token!(self, Token::LeftBrace),
+            '}' => add_token!(self, Token::RightBrace),
+            '[' => add_token!(self, Token::LeftBracket),
+            ']' => add_token!(self, Token::RightBracket),
+            ',' => add_token!(self, Token::Comma),
+            ';' => add_token!(self, Token::Semicolon),
+            ':' => add_token!(self, Token::Colon),
+            '#' => add_token!(self, Token::Hash),
             
             '.' => {
                 if self.match_char('.') && self.match_char('.') {
-                    add_token!(self, TokenType::Ellipsis, 3);
+                    add_token!(self, Token::Ellipsis);
                 } else {
-                    add_token!(self, TokenType::Dot);
+                    add_token!(self, Token::Dot);
                 }
             },                
             '+' => {
                 if self.match_char('+') {
-                    add_token!(self, TokenType::PlusPlus, 2);
+                    add_token!(self, Token::PlusPlus);
                 } else if self.match_char('=') {
-                    add_token!(self, TokenType::PlusEqual, 2);
+                    add_token!(self, Token::PlusEqual);
                 } else {
-                    add_token!(self, TokenType::Plus);
+                    add_token!(self, Token::Plus);
                 }
             },
             '-' => {
                 if self.match_char('-') {
-                    add_token!(self, TokenType::MinusMinus, 2);
+                    add_token!(self, Token::MinusMinus);
                 } else if self.match_char('=') {
-                    add_token!(self, TokenType::MinusEqual, 2);
+                    add_token!(self, Token::MinusEqual);
                 } else {
-                    add_token!(self, TokenType::Minus);
+                    add_token!(self, Token::Minus);
                 }
             },
             '%' => {
                 if self.match_char('=') {
-                    add_token!(self, TokenType::PercentEqual, 2);
+                    add_token!(self, Token::PercentEqual);
                 } else {
-                    add_token!(self, TokenType::Percent);
+                    add_token!(self, Token::Percent);
                 }
             },
             '^' => {
                 if self.match_char('=') {
-                    add_token!(self, TokenType::CaretEqual, 2);
+                    add_token!(self, Token::CaretEqual);
                 } else {
-                    add_token!(self, TokenType::Caret);
+                    add_token!(self, Token::Caret);
                 }
             },
             '*' => {
                 if self.match_char('*') {
                     if self.match_char('=') {
-                        add_token!(self, TokenType::StarStarEqual, 3);
+                        add_token!(self, Token::StarStarEqual);
                     } else {
-                        add_token!(self, TokenType::StarStar, 2);
+                        add_token!(self, Token::StarStar);
                     }
                 } else if self.match_char('=') {
-                    add_token!(self, TokenType::StarEqual, 2);
+                    add_token!(self, Token::StarEqual);
                 } else {
-                    add_token!(self, TokenType::Star);
+                    add_token!(self, Token::Star);
                 }
             },
             '/' => self.handle_slash()?,
             '!' => {
                 if self.match_char('=') {
                     if self.match_char('=') {
-                        add_token!(self, TokenType::BangEqualEqual, 3);
+                        add_token!(self, Token::BangEqualEqual);
                     } else {
-                        add_token!(self, TokenType::BangEqual, 2);
+                        add_token!(self, Token::BangEqual);
                     }
                 } else {
-                    add_token!(self, TokenType::Bang);
+                    add_token!(self, Token::Bang);
                 }
             },
             '=' => {
                 if self.match_char('>') {
-                    add_token!(self, TokenType::Arrow, 2);
+                    add_token!(self, Token::Arrow);
                 } else if self.match_char('=') {
                     if self.match_char('=') {
-                        add_token!(self, TokenType::EqualEqualEqual, 3);
+                        add_token!(self, Token::EqualEqualEqual);
                     } else {
-                        add_token!(self, TokenType::EqualEqual, 2);
+                        add_token!(self, Token::EqualEqual);
                     }
                 } else {
-                    add_token!(self, TokenType::Equal);
+                    add_token!(self, Token::Equal);
                 }
             },
             
             '<' => {
                 if self.match_char('=') {
-                    add_token!(self, TokenType::LessEqual, 2);
+                    add_token!(self, Token::LessEqual);
                 } else if self.match_char('<') {
                     if self.match_char('=') {
-                        add_token!(self, TokenType::LessLessEqual, 3);
+                        add_token!(self, Token::LessLessEqual);
                     } else {
-                        add_token!(self, TokenType::LessLess, 2);
+                        add_token!(self, Token::LessLess);
                     }
                 } else {
-                    add_token!(self, TokenType::Less);
+                    add_token!(self, Token::Less);
                 }
             },
             
             '>' => {
                 if self.match_char('=') {
-                    add_token!(self, TokenType::GreaterEqual, 2);
+                    add_token!(self, Token::GreaterEqual);
                 } else if self.match_char('>') {
                     if self.match_char('>') {
                         if self.match_char('=') {
-                            add_token!(self, TokenType::GreaterGreaterGreaterEqual, 4);
+                            add_token!(self, Token::GreaterGreaterGreaterEqual);
                         } else {
-                            add_token!(self, TokenType::GreaterGreaterGreater, 3);
+                            add_token!(self, Token::GreaterGreaterGreater);
                         }
                     } else if self.match_char('=') {
-                        add_token!(self, TokenType::GreaterGreaterEqual, 3);
+                        add_token!(self, Token::GreaterGreaterEqual);
                     } else {
-                        add_token!(self, TokenType::GreaterGreater, 2);
+                        add_token!(self, Token::GreaterGreater);
                     }
                 } else {
-                    add_token!(self, TokenType::Greater);
+                    add_token!(self, Token::Greater);
                 }
             },
             
             '&' => {
                 if self.match_char('&') {
                     if self.match_char('=') {
-                        add_token!(self, TokenType::AmpersandAmpersandEqual, 3);
+                        add_token!(self, Token::AmpersandAmpersandEqual);
                     } else {
-                        add_token!(self, TokenType::AmpersandAmpersand, 2);
+                        add_token!(self, Token::AmpersandAmpersand);
                     }
                 } else if self.match_char('=') {
-                    add_token!(self, TokenType::AmpersandEqual, 2);
+                    add_token!(self, Token::AmpersandEqual);
                 } else {
-                    add_token!(self, TokenType::Ampersand);
+                    add_token!(self, Token::Ampersand);
                 }
             },
             
             '|' => {
                 if self.match_char('|') {
                     if self.match_char('=') {
-                        add_token!(self, TokenType::PipePipeEqual, 3);
+                        add_token!(self, Token::PipePipeEqual);
                     } else {
-                        add_token!(self, TokenType::PipePipe, 2);
+                        add_token!(self, Token::PipePipe);
                     }
                 } else if self.match_char('=') {
-                    add_token!(self, TokenType::PipeEqual, 2);
+                    add_token!(self, Token::PipeEqual);
                 } else {
-                    add_token!(self, TokenType::Pipe);
+                    add_token!(self, Token::Pipe);
                 }
             },
-            '~' => add_token!(self, TokenType::Tilde),            
+            '~' => add_token!(self, Token::Tilde),            
             '?' => {
                 if self.match_char('?') {
                     if self.match_char('=') {
-                        add_token!(self, TokenType::QuestionQuestionEqual, 3);
+                        add_token!(self, Token::QuestionQuestionEqual);
                     } else {
-                        add_token!(self, TokenType::QuestionQuestion, 2);
+                        add_token!(self, Token::QuestionQuestion);
                     }
                 } else if self.match_char('.') {
-                    add_token!(self, TokenType::QuestionDot, 2);
+                    add_token!(self, Token::QuestionDot);
                 } else {
-                    add_token!(self, TokenType::Question);
+                    add_token!(self, Token::Question);
                 }
             },
             
@@ -451,11 +444,11 @@ impl<'a> Lexer<'a> {
         } else if self.match_char('*') {
             self.block_comment()?;
         } else if self.match_char('=') {
-            add_token!(self, TokenType::SlashEqual, 2);
+            add_token!(self, Token::SlashEqual);
         } else if self.is_regexp_start() {
             self.regexp()?;
         } else {
-            add_token!(self, TokenType::Slash);
+            add_token!(self, Token::Slash);
         }
         Ok(())
     }
@@ -467,28 +460,28 @@ impl<'a> Lexer<'a> {
         }
                 
         // Get the last token type
-        let last_token = &self.tokens.last().unwrap().token_type;
+        let (last_token, _) = &self.tokens.last().unwrap();
                 
         // A slash starts a regex if it follows a token that cannot be the end of an expression
         match last_token {
 
             // After these tokens, a slash is division (these can end an expression)
-            TokenType::Identifier(_) | 
-            TokenType::NumberLiteral(_) |
-            TokenType::StringLiteral(_) |
-            TokenType::RegExpLiteral(_, _) |
-            TokenType::TemplateLiteral(_) |
-            TokenType::True |
-            TokenType::False |
-            TokenType::Null |
-            TokenType::This |
-            TokenType::RightParen |
-            TokenType::RightBracket |
-            TokenType::PlusPlus |
-            TokenType::MinusMinus => false,
+            Token::Identifier(_) | 
+            Token::NumberLiteral(_) |
+            Token::StringLiteral(_) |
+            Token::RegExpLiteral(_, _) |
+            Token::TemplateLiteral(_) |
+            Token::True |
+            Token::False |
+            Token::Null |
+            Token::This |
+            Token::RightParen |
+            Token::RightBracket |
+            Token::PlusPlus |
+            Token::MinusMinus => false,
 
             // Special case: right brace - could be block or object literal
-            TokenType::RightBrace => {
+            Token::RightBrace => {
                 // TODO implement properly
 
                 // This is a complex case that depends on context
@@ -568,10 +561,8 @@ impl<'a> Lexer<'a> {
                 ));
             }
         }
-        
-        let length = (self.current - self.start) as usize;
 
-        add_token!(self, TokenType::RegExpLiteral(pattern, flags), length);
+        add_token!(self, Token::RegExpLiteral(pattern, flags));
 
         Ok(())
     }
@@ -711,9 +702,7 @@ impl<'a> Lexer<'a> {
         // Consume the closing backtick
         self.advance();
         
-        let length = (self.current - self.start) as usize;
-        
-        add_token!(self, TokenType::TemplateLiteral(parts), length);
+        add_token!(self, Token::TemplateLiteral(parts));
         
         Ok(())
     }
@@ -794,10 +783,7 @@ impl<'a> Lexer<'a> {
         // Consume the closing quote
         self.advance();        
 
-        
-        let length = (self.current - self.start) as usize;
-
-        add_token!(self, TokenType::StringLiteral(value), length);
+        add_token!(self, Token::StringLiteral(value));
 
         Ok(())
     }
@@ -1045,10 +1031,8 @@ impl<'a> Lexer<'a> {
                     start_column
                 ));
             }
-            
-            let length = (self.current - self.start) as usize;
 
-            add_token!(self, TokenType::BigIntLiteral(value_str), length);
+            add_token!(self, Token::BigIntLiteral(value_str));
 
             return Ok(());
         }
@@ -1061,18 +1045,14 @@ impl<'a> Lexer<'a> {
            !value_str.contains('E') && value_str.len() < 10 {
             // For small integers, parse directly to avoid floating point conversion
             if let Ok(int_val) = value_str.parse::<i32>() {
-                let length = (self.current - self.start) as usize;
-                
-                add_token!(self, TokenType::NumberLiteral(int_val as f64), length);
-
+                add_token!(self, Token::NumberLiteral(int_val as f64));
                 return Ok(());
             }
         }
         
         match value_str.parse::<f64>() {
             Ok(value) => {
-                let length = (self.current - self.start) as usize;
-                add_token!(self, TokenType::NumberLiteral(value), length);
+                add_token!(self, Token::NumberLiteral(value));
                 Ok(())
             },
             Err(_) => Err(LexerError::new(
@@ -1111,8 +1091,7 @@ impl<'a> Lexer<'a> {
             // Parse as binary
             match i64::from_str_radix(&value_str.replace('_', ""), 2) {
                 Ok(_) => {
-                    let length = (self.current - self.start) as usize;
-                    add_token!(self, TokenType::BigIntLiteral(format!("0b{}", value_str)), length);
+                    add_token!(self, Token::BigIntLiteral(format!("0b{}", value_str)));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(
@@ -1128,8 +1107,7 @@ impl<'a> Lexer<'a> {
             // Parse as binary and convert to f64
             match i64::from_str_radix(&value_str.replace('_', ""), 2) {
                 Ok(value) => {
-                    let length = (self.current - self.start) as usize;
-                    add_token!(self, TokenType::NumberLiteral(value as f64), length);
+                    add_token!(self, Token::NumberLiteral(value as f64));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(
@@ -1169,8 +1147,7 @@ impl<'a> Lexer<'a> {
             // Parse as octal
             match i64::from_str_radix(&value_str.replace('_', ""), 8) {
                 Ok(_) => {
-                    let length = (self.current - self.start) as usize;
-                    add_token!(self, TokenType::BigIntLiteral(format!("0o{}", value_str)), length);
+                    add_token!(self, Token::BigIntLiteral(format!("0o{}", value_str)));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(
@@ -1186,8 +1163,7 @@ impl<'a> Lexer<'a> {
             // Parse as octal and convert to f64
             match i64::from_str_radix(&value_str.replace('_', ""), 8) {
                 Ok(value) => {
-                    let length = (self.current - self.start) as usize;
-                    add_token!(self, TokenType::NumberLiteral(value as f64), length);
+                    add_token!(self, Token::NumberLiteral(value as f64));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(
@@ -1227,8 +1203,7 @@ impl<'a> Lexer<'a> {
             // Parse as hex
             match i64::from_str_radix(&value_str.replace('_', ""), 16) {
                 Ok(_) => {
-                    let length = (self.current - self.start) as usize;
-                    add_token!(self, TokenType::BigIntLiteral(format!("0x{}", value_str)), length);
+                    add_token!(self, Token::BigIntLiteral(format!("0x{}", value_str)));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(
@@ -1244,8 +1219,7 @@ impl<'a> Lexer<'a> {
             // Parse as hex and convert to f64
             match i64::from_str_radix(&value_str.replace('_', ""), 16) {
                 Ok(value) => {
-                    let length = (self.current - self.start) as usize;
-                    add_token!(self, TokenType::NumberLiteral(value as f64), length);
+                    add_token!(self, Token::NumberLiteral(value as f64));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(
@@ -1300,19 +1274,18 @@ impl<'a> Lexer<'a> {
     fn is_at_end(&self) -> bool {
         self.current >= self.source_len
     }
-    
+
     #[inline(always)]
     fn is_octal_digit(&self, c: char) -> bool {
         c >= '0' && c <= '7'
     }
-    
     
     #[inline(always)]
     fn advance(&mut self) -> char {
         if self.is_at_end() {
             return '\0';
         }
-        
+
         // Fast path for ASCII (most common case in JS)
         if self.current < self.source_len && self.bytes[self.current] < 128 {
             let c = self.bytes[self.current] as char;
@@ -1322,7 +1295,7 @@ impl<'a> Lexer<'a> {
             self.column += 1;
             return c;
         }
-        
+
         // Fallback for non-ASCII (UTF-8)
         let c = self.source[self.current..].chars().next().unwrap();
         self.previous_char = self.current_char;
@@ -1348,18 +1321,15 @@ impl<'a> Lexer<'a> {
         if self.current + 1 >= self.source_len {
             return '\0';
         }
-        
         // Fast path for ASCII
         if self.bytes[self.current] < 128 && self.bytes[self.current + 1] < 128 {
             return self.bytes[self.current + 1] as char;
         }
-        
         // If current is ASCII but next might not be
         if self.bytes[self.current] < 128 {
             let next_pos = self.current + 1;
             return self.source[next_pos..].chars().next().unwrap_or('\0');
         }
-        
         // Both current and next are non-ASCII
         let mut iter = self.source[self.current..].chars();
         iter.next();
@@ -1370,7 +1340,7 @@ impl<'a> Lexer<'a> {
     fn peek_previous(&self) -> char {
         self.previous_char
     }
-    
+
     #[inline(always)]
     fn match_char(&mut self, expected: char) -> bool {
         if self.is_at_end() || self.peek() != expected {
@@ -1381,4 +1351,3 @@ impl<'a> Lexer<'a> {
         }
     }
 }
-

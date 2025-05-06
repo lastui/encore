@@ -2,7 +2,7 @@ use super::prelude::*;
 
 
 use crate::ast::*;
-use crate::lexer::{Token, TokenType, LexicalContext};
+use crate::lexer::{Token, LexicalContext};
 use super::error::ParseResult;
 use super::core::Parser;
 
@@ -49,7 +49,7 @@ impl Parser {
         let start_token = self.advance().unwrap(); // consume 'import'
         
         // Handle import() expression vs import statement
-        if self.check(&TokenType::LeftParen) {
+        if self.check(&Token::LeftParen) {
             // This is an import() expression, not an import statement
             // Rewind and parse as expression statement
             self.current -= 1;
@@ -60,10 +60,10 @@ impl Parser {
         let mut source: Option<Box<str>> = None;
         
         // Handle different import forms
-        if matches!(self.peek_token_type(), Some(TokenType::StringLiteral(_))) {
+        if matches!(self.peek(), Some(Token::StringLiteral(_))) {
             // import "module-name"; (side-effect import)
             source = self.parse_module_source()?;
-        } else if self.match_token(&TokenType::Star) {
+        } else if self.match_token(&Token::Star) {
             // import * as name from "module-name"; (namespace import)
             specifiers.push(self.parse_namespace_import()?);
             source = self.parse_from_clause()?;
@@ -72,20 +72,20 @@ impl Parser {
             // or just { named1, named2 } from "module-name";
             
             // Check for default import
-            if !self.check(&TokenType::LeftBrace) && !self.check(&TokenType::From) {
+            if !self.check(&Token::LeftBrace) && !self.check(&Token::From) {
                 specifiers.push(self.parse_default_import()?);
                 
                 // Optional comma before named imports
-                if self.match_token(&TokenType::Comma) && !self.check(&TokenType::From) {
+                if self.match_token(&Token::Comma) && !self.check(&Token::From) {
                     // Continue to named imports
-                } else if !self.check(&TokenType::From) {
+                } else if !self.check(&Token::From) {
                     // If no comma and not 'from', it's an error
                     return Err(parser_error_at_current!(self, "Expected ',' or 'from' after default import"));
                 }
             }
             
             // Named imports
-            if self.match_token(&TokenType::LeftBrace) {
+            if self.match_token(&Token::LeftBrace) {
                 let named_imports = self.parse_named_imports()?;
                 specifiers.extend(named_imports);
             }
@@ -99,13 +99,13 @@ impl Parser {
         }
         
         // Parse import assertions if present
-        let assertions = if self.match_token(&TokenType::With) {
+        let assertions = if self.match_token(&Token::With) {
             self.parse_import_assertions()?
         } else {
             Vec::new()
         };
         
-        self.consume(&TokenType::Semicolon, "Expected ';' after import statement")?;
+        self.consume(&Token::Semicolon, "Expected ';' after import statement")?;
         
         if let Some(src) = source {
             Ok(Statement::Import {
@@ -120,7 +120,7 @@ impl Parser {
 
     // Helper method to parse a module source string
     pub fn parse_module_source(&mut self) -> ParseResult<Option<Box<str>>> {
-        if let TokenType::StringLiteral(s) = self.advance().unwrap().token_type.clone() {
+        if let Token::StringLiteral(s) = self.advance().unwrap().clone() {
             Ok(Some(s.into_boxed_str()))
         } else {
             Err(parser_error_at_current!(self, "Expected string literal for module source"))
@@ -129,13 +129,13 @@ impl Parser {
 
     // Helper method to parse the 'from "module-name"' part
     pub fn parse_from_clause(&mut self) -> ParseResult<Option<Box<str>>> {
-        self.consume(&TokenType::From, "Expected 'from' after import specifiers")?;
+        self.consume(&Token::From, "Expected 'from' after import specifiers")?;
         self.parse_module_source()
     }
 
     // Helper method to parse namespace import: * as name
     pub fn parse_namespace_import(&mut self) -> ParseResult<ImportSpecifier> {
-        self.consume(&TokenType::As, "Expected 'as' after '*'")?;
+        self.consume(&Token::As, "Expected 'as' after '*'")?;
         // Use ImportExport context for parsing the identifier
         let local = self.with_context(LexicalContext::ImportExport, |parser| {
             parser.expect_identifier("Expected namespace import name")
@@ -159,11 +159,11 @@ impl Parser {
         self.with_context(LexicalContext::ImportExport, |parser| {
             let mut specifiers = Vec::new();
             
-            if !parser.check(&TokenType::RightBrace) {
+            if !parser.check(&Token::RightBrace) {
                 loop {
                     let imported = parser.expect_identifier("Expected imported name")?;
                     
-                    let local = if parser.match_token(&TokenType::As) {
+                    let local = if parser.match_token(&Token::As) {
                         parser.expect_identifier("Expected local name after 'as'")?
                     } else {
                         imported.clone()
@@ -174,37 +174,37 @@ impl Parser {
                         local,
                     });
                     
-                    if !parser.match_token(&TokenType::Comma) {
+                    if !parser.match_token(&Token::Comma) {
                         break;
                     }
                     
                     // Handle trailing comma
-                    if parser.check(&TokenType::RightBrace) {
+                    if parser.check(&Token::RightBrace) {
                         break;
                     }
                 }
             }
             
-            parser.consume(&TokenType::RightBrace, "Expected '}' after named imports")?;
+            parser.consume(&Token::RightBrace, "Expected '}' after named imports")?;
             Ok(specifiers)
         })
     }
 
     pub fn parse_import_assertions(&mut self) -> ParseResult<Vec<ImportAssertion>> {
-        self.consume(&TokenType::LeftBrace, "Expected '{' after 'with'")?;
+        self.consume(&Token::LeftBrace, "Expected '{' after 'with'")?;
         
         let mut assertions = Vec::new();
         
-        if !self.check(&TokenType::RightBrace) {
+        if !self.check(&Token::RightBrace) {
             loop {
                 // Use ImportExport context for parsing assertion keys
                 let key = self.with_context(LexicalContext::ImportExport, |parser| {
                     parser.expect_identifier("Expected assertion key")
                 })?;
                 
-                self.consume(&TokenType::Colon, "Expected ':' after assertion key")?;
+                self.consume(&Token::Colon, "Expected ':' after assertion key")?;
                 
-                let value = if let TokenType::StringLiteral(s) = self.advance().unwrap().token_type.clone() {
+                let value = if let Token::StringLiteral(s) = self.advance().unwrap().clone() {
                     s.into_boxed_str()
                 } else {
                     return Err(parser_error_at_current!(self, "Expected string literal for assertion value"));
@@ -212,18 +212,18 @@ impl Parser {
                 
                 assertions.push(ImportAssertion { key, value });
                 
-                if !self.match_token(&TokenType::Comma) {
+                if !self.match_token(&Token::Comma) {
                     break;
                 }
                 
                 // Handle trailing comma
-                if self.check(&TokenType::RightBrace) {
+                if self.check(&Token::RightBrace) {
                     break;
                 }
             }
         }
         
-        self.consume(&TokenType::RightBrace, "Expected '}' after import assertions")?;
+        self.consume(&Token::RightBrace, "Expected '}' after import assertions")?;
         
         Ok(assertions)
     }
@@ -232,12 +232,12 @@ impl Parser {
         let start_token = self.advance().unwrap().clone(); // consume 'export'
         
         // Handle export * from "module" or export * as name from "module"
-        if self.match_token(&TokenType::Star) {
+        if self.match_token(&Token::Star) {
             return self.parse_export_all(&start_token);
         }
         
         // Handle export default ...
-        if self.match_token(&TokenType::Default) {
+        if self.match_token(&Token::Default) {
             return self.parse_export_default(&start_token);
         }
         
@@ -247,7 +247,7 @@ impl Parser {
         }
         
         // Handle export { ... } [from "..."]
-        if self.match_token(&TokenType::LeftBrace) {
+        if self.match_token(&Token::LeftBrace) {
             return self.parse_export_named_specifiers(&start_token);
         }
         
@@ -258,7 +258,7 @@ impl Parser {
     // Helper method for export * from "module" or export * as name from "module"
     pub fn parse_export_all(&mut self, start_token: &Token) -> ParseResult<Statement> {
         // Use ImportExport context for parsing the exported name
-        let exported = if self.match_token(&TokenType::As) {
+        let exported = if self.match_token(&Token::As) {
             Some(self.with_context(LexicalContext::ImportExport, |parser| {
                 parser.expect_identifier("Expected exported name after 'as'")
             })?)
@@ -266,34 +266,34 @@ impl Parser {
             None
         };
         
-        if !self.match_token(&TokenType::From) {
+        if !self.match_token(&Token::From) {
             return Err(parser_error_at_current!(self, "Expected 'from' after export *"));
         }
         
         let source = self.parse_module_source()?
             .ok_or_else(|| super::error::ParserError::at_current(self, "Expected string literal for module source"))?;
 
-        self.consume(&TokenType::Semicolon, "Expected ';' after export statement")?;
+        self.consume(&Token::Semicolon, "Expected ';' after export statement")?;
         
         Ok(Statement::Export(ExportDeclaration::All { source, exported }))
     }
 
     // Helper method for export default ...
     pub fn parse_export_default(&mut self, start_token: &Token) -> ParseResult<Statement> {
-        let declaration = if self.check(&TokenType::Function) {
+        let declaration = if self.check(&Token::Function) {
             let func_decl = self.parse_function_declaration()?;
             ExportDefaultDeclaration::Function(func_decl)
-        } else if self.check(&TokenType::Class) {
+        } else if self.check(&Token::Class) {
             let class_decl = self.parse_class_declaration()?;
             ExportDefaultDeclaration::Class(class_decl)
-        } else if self.check(&TokenType::Async) && self.is_async_function() {
+        } else if self.check(&Token::Async) && self.is_async_function() {
             // Handle async function
             let func_decl = self.parse_async_function_declaration()?;
             ExportDefaultDeclaration::Function(func_decl)
         } else {
             // export default expression;
             let expr = self.parse_expression()?;
-            self.consume(&TokenType::Semicolon, "Expected ';' after export default expression")?;
+            self.consume(&Token::Semicolon, "Expected ';' after export default expression")?;
             ExportDefaultDeclaration::Expression(expr)
         };
         
@@ -302,13 +302,13 @@ impl Parser {
 
     // Helper method for export declaration
     pub fn parse_export_declaration(&mut self, start_token: &Token) -> ParseResult<Statement> {
-        let declaration = if self.check(&TokenType::Function) {
+        let declaration = if self.check(&Token::Function) {
             Declaration::Function(self.parse_function_declaration()?)
-        } else if self.check(&TokenType::Class) {
+        } else if self.check(&Token::Class) {
             Declaration::Class(self.parse_class_declaration()?)
-        } else if self.check(&TokenType::Async) && self.is_async_function() {
+        } else if self.check(&Token::Async) && self.is_async_function() {
             Declaration::Function(self.parse_async_function_declaration()?)
-        } else if self.check(&TokenType::Var) || self.check(&TokenType::Let) || self.check(&TokenType::Const) {
+        } else if self.check(&Token::Var) || self.check(&Token::Let) || self.check(&Token::Const) {
             Declaration::Variable(self.parse_variable_declaration()?)
         } else {
             return Err(parser_error_at_current!(self, "Expected declaration in export statement"));
@@ -326,13 +326,13 @@ impl Parser {
         let specifiers = self.parse_export_specifiers()?;
         
         // Optional from clause
-        let source = if self.match_token(&TokenType::From) {
+        let source = if self.match_token(&Token::From) {
             Some(self.parse_module_source()?.ok_or_else(|| super::error::ParserError::at_current(self, "Expected string literal for module source"))?)
         } else {
             None
         };
         
-        self.consume(&TokenType::Semicolon, "Expected ';' after export statement")?;
+        self.consume(&Token::Semicolon, "Expected ';' after export statement")?;
         
         Ok(Statement::Export(ExportDeclaration::Named {
             declaration: None,
@@ -346,39 +346,39 @@ impl Parser {
         self.with_context(LexicalContext::ImportExport, |parser| {
             let mut specifiers = Vec::new();
             
-            if !parser.check(&TokenType::RightBrace) {
+            if !parser.check(&Token::RightBrace) {
                 loop {
                     let local = parser.expect_identifier("Expected exported identifier")?;
-                    let exported = if parser.match_token(&TokenType::As) {
+                    let exported = if parser.match_token(&Token::As) {
                         parser.expect_identifier("Expected exported name after 'as'")?
                     } else {
                         local.clone()
                     };
                     specifiers.push(ExportSpecifier { local, exported });
                     
-                    if !parser.match_token(&TokenType::Comma) {
+                    if !parser.match_token(&Token::Comma) {
                         break;
                     }
                     
                     // Handle trailing comma
-                    if parser.check(&TokenType::RightBrace) {
+                    if parser.check(&Token::RightBrace) {
                         break;
                     }
                 }
             }
             
-            parser.consume(&TokenType::RightBrace, "Expected '}' after export specifiers")?;
+            parser.consume(&Token::RightBrace, "Expected '}' after export specifiers")?;
             Ok(specifiers)
         })
     }
 
     // Helper method to check if the current token starts a declaration
     pub fn is_declaration_start(&self) -> bool {
-        self.check(&TokenType::Var) || 
-        self.check(&TokenType::Let) || 
-        self.check(&TokenType::Const) ||
-        self.check(&TokenType::Function) || 
-        self.check(&TokenType::Class) ||
-        (self.check(&TokenType::Async) && self.is_async_function())
+        self.check(&Token::Var) || 
+        self.check(&Token::Let) || 
+        self.check(&Token::Const) ||
+        self.check(&Token::Function) || 
+        self.check(&Token::Class) ||
+        (self.check(&Token::Async) && self.is_async_function())
     }
 }

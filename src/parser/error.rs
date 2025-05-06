@@ -1,4 +1,4 @@
-use crate::lexer::{LexerError, Token};
+use crate::lexer::{LexerError, TemplatePart, Token};
 use super::core::Parser;
 use std::fmt;
 
@@ -10,108 +10,200 @@ pub struct ParserError {
     pub source_line: Option<String>,
     pub source_span: Option<(usize, usize)>,
     pub context_stack: Vec<String>,
-    pub current_token: Option<Token>,
+    pub current_token: Token,
 }
 
 impl ParserError {
 
-    pub fn new(message: &str, line: usize, column: usize) -> Self {
-        ParserError {
-            message: message.to_string(),
-            line,
-            column,
-            source_line: None,
-            source_span: None,
-            context_stack: Vec::new(),
-            current_token: None,
-        }
-    }
-    
-    /// Create a parser error from a parser reference and token information
-    pub fn from_parser(parser: &Parser, message: &str, line: usize, column: usize, token_length: usize) -> Self {
-        let source = parser.get_source_text();
-        
-        let source_line = extract_source_line_with_context(&source, line, column, 60);
-        let span_end = column + token_length;
-
-        let (adjusted_column, adjusted_span_end) = if source_line.starts_with("...") {
-            let adjusted_col = column.min(60) + 3;
-            let adjusted_end = adjusted_col + token_length;
-            (adjusted_col, adjusted_end)
-        } else {
-            (column, span_end)
-        };
+    pub fn new(parser: &Parser, message: &str) -> Self {
 
         let context_stack = parser.get_context_stack_info();
             
-        let current_token = parser.peek_token().cloned();
+        let token = parser.peek().unwrap_or_else(|| &Token::EOF);
+
+        // Infer token length based on its type
+        let token_length = match token {
+
+            Token::EOF => 0,
+
+            Token::LeftParen
+            | Token::RightParen
+            | Token::LeftBrace
+            | Token::RightBrace
+            | Token::LeftBracket
+            | Token::RightBracket
+            | Token::Comma
+            | Token::Dot
+            | Token::Semicolon
+            | Token::Colon
+            | Token::Question
+            | Token::Hash
+            | Token::Plus
+            | Token::Minus
+            | Token::Star
+            | Token::Slash
+            | Token::Percent
+            | Token::Equal
+            | Token::Bang
+            | Token::Greater
+            | Token::Caret
+            | Token::Less
+            | Token::Pipe
+            | Token::Ampersand
+            | Token::Tilde => 1,
+
+            Token::PlusPlus
+            | Token::PlusEqual
+            | Token::MinusMinus
+            | Token::MinusEqual
+            | Token::StarEqual
+            | Token::SlashEqual
+            | Token::PercentEqual
+            | Token::EqualEqual
+            | Token::BangEqual
+            | Token::GreaterEqual
+            | Token::GreaterGreater
+            | Token::LessEqual
+            | Token::LessLess
+            | Token::Arrow
+            | Token::StarStar
+            | Token::AmpersandEqual
+            | Token::AmpersandAmpersand
+            | Token::PipeEqual
+            | Token::PipePipe
+            | Token::CaretEqual
+            | Token::QuestionQuestion
+            | Token::If
+            | Token::In
+            | Token::Of
+            | Token::Do
+            | Token::As
+            | Token::QuestionDot => 2,
+
+            Token::EqualEqualEqual
+            | Token::BangEqualEqual
+            | Token::GreaterGreaterEqual
+            | Token::GreaterGreaterGreater
+            | Token::LessLessEqual
+            | Token::AmpersandAmpersand
+            | Token::AmpersandAmpersandEqual
+            | Token::PipePipeEqual
+            | Token::Ellipsis
+            | Token::StarStarEqual
+            | Token::Var            
+            | Token::Let
+            | Token::For
+            | Token::New
+            | Token::Try
+            | Token::Get
+            | Token::Set
+            | Token::QuestionQuestionEqual => 3,
+
+            Token::Null 
+            | Token::GreaterGreaterGreaterEqual
+            | Token::With
+            | Token::Else
+            | Token::Void
+            | Token::This
+            | Token::Case
+            | Token::Eval
+            | Token::Enum 
+            | Token::From
+            | Token::True => 4,
+
+            Token::Const 
+            | Token::While
+            | Token::Break
+            | Token::Super
+            | Token::Await
+            | Token::Class
+            | Token::Throw
+            | Token::Catch
+            | Token::Yield
+            | Token::Async
+            | Token::False => 5,
+
+            Token::Return 
+            | Token::Export 
+            | Token::Import
+            | Token::Switch
+            | Token::Typeof
+            | Token::Target
+            | Token::Public
+            | Token::Delete
+            | Token::Static => 6,
+
+            Token::Extends 
+            | Token::Default 
+            | Token::Finally
+            | Token::Package
+            | Token::Private => 7,
+
+            Token::Debugger 
+            | Token::Continue
+            | Token::Function => 8,
+
+            Token::Undefined 
+            | Token::Interface
+            | Token::Protected
+            | Token::Arguments => 9,
+
+            Token::Implements 
+            | Token::InstanceOf => 10,
+
+            Token::Constructor => 11,
+
+            // Literals
+            Token::Identifier(name) => name.len(),
+            Token::StringLiteral(value) => value.len() + 2, // Account for quotation marks
+            Token::NumberLiteral(value) => value.to_string().len(),
+            Token::BigIntLiteral(value) => value.len() + 1, // Account for the trailing 'n'
+            Token::RegExpLiteral(pattern, flags) => pattern.len() + flags.len() + 2, // Account for the slashes
+            Token::TemplateLiteral(parts) => parts.iter().fold(2, |acc, part| {
+                acc + match part {
+                    TemplatePart::String(s) => s.len(),
+                    TemplatePart::Expression(e) => e.len(),
+                }
+            }),
+
+        };
+
+        let (line, column) = parser.get_current_position();
+
+        let col = column - token_length;
+
+        let source = parser.get_source_text();
+        
+        let source_line = extract_source_line_with_context(&source, line, col, 60);
+        let span_end = column;
+
+        let (adjusted_column, adjusted_span_end) = if source_line.starts_with("...") {
+            let adjusted_col = col.min(60) + 3;
+            let adjusted_end = adjusted_col + token_length;
+            (adjusted_col, adjusted_end)
+        } else {
+            (col, span_end)
+        };
 
         ParserError {
             message: message.to_string(),
             line,
-            column,
+            column: col,
             source_line: Some(source_line),
             source_span: Some((adjusted_column, adjusted_span_end)),
             context_stack,
-            current_token,
+            current_token: token.clone(),
         }
     }
     
     /// Create a parser error from the current token with an immutable reference
     pub fn at_current(parser: &Parser, message: &str) -> Self {
-        if let Some(token) = parser.peek_token() {
-            Self::from_parser(
-                parser,
-                message,
-                token.line,
-                token.column,
-                token.length
-            )
-        } else if let Some(token) = parser.previous() {
-            Self::from_parser(
-                parser,
-                message,
-                token.line,
-                token.column,
-                token.length
-            )
-        } else {
-            Self::new(message, 0, 0)
-        }
+        Self::new(parser, message)
     }
     
     /// Create a parser error from the current token with a mutable reference
     pub fn at_current_mut(parser: &mut Parser, message: &str) -> Self {
-        Self::at_current(&*parser, message)
-    }
-    
-    /// Create a parser error from the previous token with an immutable reference
-    pub fn at_previous(parser: &Parser, message: &str) -> Self {
-        if let Some(token) = parser.previous() {
-            Self::from_parser(
-                parser,
-                message,
-                token.line,
-                token.column,
-                token.length
-            )
-        } else if let Some(token) = parser.peek_token() {
-            Self::from_parser(
-                parser,
-                message,
-                token.line,
-                token.column,
-                token.length
-            )
-        } else {
-            // Fallback if no token is available
-            Self::new(message, 0, 0)
-        }
-    }
-    
-    /// Create a parser error from the previous token with a mutable reference
-    pub fn at_previous_mut(parser: &mut Parser, message: &str) -> Self {
-        Self::at_previous(&*parser, message)
+        Self::new(&*parser, message)
     }
 
 }
@@ -153,33 +245,20 @@ impl fmt::Display for ParserError {
             }
             
             writeln!(f)?;
-            
-            // Print current token information if available
-            if let Some(token) = &self.current_token {
-                writeln!(f, "\nCurrent token: {:#?}", token.token_type)?;
-            }
-            
-            // Print context stack information if available
-            if !self.context_stack.is_empty() {
-                writeln!(f, "\nLexical context stack (newest first):")?;
-                for (i, context) in self.context_stack.iter().enumerate() {
-                    writeln!(f, "  {}: {}", i, context)?;
-                }
-            }
         } else {
             writeln!(f, "at line {}, column {}", self.line, self.column)?;
-            
-            // Print current token information if available
-            if let Some(token) = &self.current_token {
-                writeln!(f, "\nCurrent token: {:#?}", token.token_type)?;
-            }
-            
-            // Print context stack information if available
-            if !self.context_stack.is_empty() {
-                writeln!(f, "\nLexical context stack (newest first):")?;
-                for (i, context) in self.context_stack.iter().enumerate() {
-                    writeln!(f, "  {}: {}", i, context)?;
-                }
+        }
+
+        // Print current token information if available
+        if !matches!(self.current_token, Token::EOF) {
+            writeln!(f, "\nCurrent token: {:#?}", self.current_token)?;
+        }
+        
+        // Print context stack information if available
+        if !self.context_stack.is_empty() {
+            writeln!(f, "\nLexical context stack:")?;
+            for (i, context) in self.context_stack.iter().enumerate() {
+                writeln!(f, "  {}: {}", i, context)?;
             }
         }
         
@@ -213,7 +292,7 @@ impl From<LexerError> for ParserError {
             source_line: None,
             source_span: None,
             context_stack: Vec::new(),
-            current_token: None,
+            current_token: Token::EOF,
         }
     }
 }
@@ -277,31 +356,11 @@ macro_rules! parser_error_at_current {
 }
 
 #[macro_export]
-macro_rules! parser_error_at_previous {
-    ($self:expr, $message:expr) => {
-        $crate::parser::error::ParserError::at_previous($self, $message)
-    };
-    ($self:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::parser::error::ParserError::at_previous($self, &format!($fmt, $($arg)*))
-    };
-}
-
-#[macro_export]
 macro_rules! parser_error_at_current_mut {
     ($self:expr, $message:expr) => {
         $crate::parser::error::ParserError::at_current_mut($self, $message)
     };
     ($self:expr, $fmt:expr, $($arg:tt)*) => {
         $crate::parser::error::ParserError::at_current_mut($self, &format!($fmt, $($arg)*))
-    };
-}
-
-#[macro_export]
-macro_rules! parser_error_at_previous_mut {
-    ($self:expr, $message:expr) => {
-        $crate::parser::error::ParserError::at_previous_mut($self, $message)
-    };
-    ($self:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::parser::error::ParserError::at_previous_mut($self, &format!($fmt, $($arg)*))
     };
 }

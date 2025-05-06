@@ -1,14 +1,14 @@
 use super::prelude::*;
 
 use crate::ast::*;
-use crate::lexer::{Token, TokenType, LexicalContext};
+use crate::lexer::{Token, LexicalContext};
 use super::error::{ParserError, ParseResult};
 use super::state::ParserState;
 use std::collections::HashSet;
 
 
 pub struct Parser {
-    pub tokens: Vec<Token>,
+    pub tokens: Vec<(Token, (usize, usize))>,
     pub current: usize,
     pub comments: Vec<Comment>,
     pub state: ParserState,
@@ -19,7 +19,7 @@ pub struct Parser {
 
 impl Parser {
 
-    pub fn new(tokens: Vec<Token>) -> Self {
+    pub fn new(tokens: Vec<(Token, (usize, usize))>) -> Self {
         Parser {
             tokens,
             current: 0,
@@ -59,59 +59,57 @@ impl Parser {
             .collect()
     }
 
+    pub fn get_current_position(&self) -> (usize, usize) {
+        let item = if self.is_at_end() {
+            self.tokens.get(self.current - 1)
+        } else {
+            self.tokens.get(self.current)
+        };
+
+        item.map(|(_, pos)| pos).unwrap_or(&(0,0)).clone()
+    }
+
+    // TODO FIXME this is erroneous it takes All the tokens starting from now until end not just those ones to be processed within the context scope
     pub fn with_context<F, R>(&mut self, context: LexicalContext, f: F) -> ParseResult<R>
     where
         F: FnOnce(&mut Self) -> ParseResult<R>,
-    {
-        let current_pos = self.current;
-        
-        // Only process tokens if the context has any keywords that can be identifiers
-        if context.has_keywords_as_identifiers() {
-            for token in self.tokens.iter_mut().skip(current_pos) {
-                // Work directly with the token type without extracting text first
-                if context.allows_token_as_identifier(&token.token_type) {
-                    // Get the keyword text only when we know we need to convert it
-                    if let Some(text) = token.token_type.keyword_text() {
-                        token.token_type = TokenType::Identifier(text.to_string());
+        {
+            let current_pos = self.current;
+            
+            // Only process tokens if the context has any keywords that can be identifiers
+            if context.has_keywords_as_identifiers() {
+            // Iterate over tokens starting from the current position
+            for (token_type, _) in self.tokens.iter_mut().skip(current_pos) {
+                // Check if the token type can be treated as an identifier in the current context
+                if context.allows_token_as_identifier(token_type) {
+                    // Get the keyword text only when a conversion is needed
+                    if let Some(text) = token_type.keyword_text() {
+                        // Modify the token type in-place
+                        *token_type = Token::Identifier(text.to_string());
                     }
                 }
             }
         }
-        
+            
         self.push_context(context);
         let result = f(self);
         self.pop_context();
         result
     }
-
-    /*
-    pub fn with_context<F, R>(&mut self, context: LexicalContext, f: F) -> ParseResult<R>
-    where
-        F: FnOnce(&mut Self) -> ParseResult<R>,
-    {
-        let current_pos = self.current;
-        for token in self.tokens.iter_mut().skip(current_pos) {
-            // TODO might be improved to not need keyword_text invocation and do checks on tokens dirrectly
-            if let Some(text) = token.token_type.keyword_text() {
-                if context.allows_keyword_as_identifier(text) {
-                    token.token_type = TokenType::Identifier(text.to_string());
-                }
-            }
-        }
-        self.push_context(context);
-        let result = f(self);
-        self.pop_context();
-        result
-    }
-    */
 
     // Helper methods to check contexts
-    pub fn is_in_loop(&self) -> bool {
+    pub fn is_in_loop_body(&self) -> bool {
         self.context_stack.iter().any(|ctx| matches!(ctx, LexicalContext::LoopBody))
+    }
+
+    pub fn is_in_loop_parameters(&self) -> bool {
+        //self.context_stack.iter().any(|ctx| matches!(ctx, LexicalContext::LoopParameters))
+        matches!(self.context_stack.last(), Some(LexicalContext::LoopParameters))
     }
     
     pub fn is_in_switch(&self) -> bool {
-        self.context_stack.iter().any(|ctx| matches!(ctx, LexicalContext::SwitchBody))
+        //self.context_stack.iter().any(|ctx| matches!(ctx, LexicalContext::SwitchBody))
+        matches!(self.context_stack.last(), Some(LexicalContext::SwitchBody))
     }
     
     pub fn is_in_function(&self) -> bool {
@@ -147,40 +145,44 @@ impl Parser {
 
     // Token navigation methods
     pub fn is_at_end(&self) -> bool {
-        self.current >= self.tokens.len() || matches!(self.peek_token_type(), Some(TokenType::EOF))
+        self.current >= self.tokens.len() || matches!(self.peek(), Some(Token::EOF))
     }
 
-    pub fn peek_token(&self) -> Option<&Token> {
-        self.tokens.get(self.current)
-    }
-
-    pub fn peek_token_type(&self) -> Option<&TokenType> {
-        self.peek_token().map(|t| &t.token_type)
-    }
-
-    pub fn previous(&self) -> Option<&Token> {
+    pub fn peek_previous(&self) -> Option<&Token> {
         if self.current > 0 {
-            self.tokens.get(self.current - 1)
+            self.tokens.get(self.current - 1).map(|(token_type, _)| token_type)
         } else {
             None
         }
+    }
+
+    pub fn peek_next(&self, offset: usize) -> Option<&Token> {
+        if self.current + offset < self.tokens.len() {
+            self.tokens.get(self.current + offset).map(|(token_type, _)| token_type)
+        } else {
+            None
+        }
+    }
+
+    pub fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.current).map(|(token_type, _)| token_type)
     }
 
     pub fn advance(&mut self) -> Option<&Token> {
         if !self.is_at_end() {
             self.current += 1;
         }
-        self.previous()
+        self.peek_previous()
     }
 
-    pub fn check(&self, token_type: &TokenType) -> bool {
-        match self.peek_token_type() {
+    pub fn check(&self, token_type: &Token) -> bool {
+        match self.peek() {
             Some(t) => t == token_type,
             None => false,
         }
     }
 
-    pub fn match_token(&mut self, token_type: &TokenType) -> bool {
+    pub fn match_token(&mut self, token_type: &Token) -> bool {
         if self.check(token_type) {
             self.advance();
             true
@@ -189,7 +191,7 @@ impl Parser {
         }
     }
 
-    pub fn match_any(&mut self, token_types: &[TokenType]) -> bool {
+    pub fn match_any(&mut self, token_types: &[Token]) -> bool {
         for token_type in token_types {
             if self.check(token_type) {
                 self.advance();
@@ -199,45 +201,32 @@ impl Parser {
         false
     }
 
-    pub fn consume(&mut self, token_type: &TokenType, message: &str) -> ParseResult<Token> {
-        thread_local! {
-            static DUMMY_TOKEN: Token = Token::new(TokenType::EOF, 0, 0, 0);
-        }
-
-        if token_type == &TokenType::Semicolon {
-            return self.consume_semicolon(message);
+    pub fn consume(&mut self, token_type: &Token, message: &str) -> ParseResult<Token> {
+        if token_type == &Token::Semicolon {
+            self.consume_semicolon(message)?;
+            return Ok(Token::Semicolon);
         } else if self.check(token_type) {
             return Ok(self.advance().unwrap().clone());
         }
 
-        let token = if let Some(t) = self.peek_token() {
-            t
-        } else if let Some(t) = self.previous() {
-            t
-        } else {
-            return DUMMY_TOKEN.with(|token| {
-                Err(parser_error_at_current!(self, message))
-            });
-        };
-            
         Err(parser_error_at_current!(self, message))
     }
 
     pub fn previous_line_terminator(&self) -> bool {
-        if let Some(prev) = self.previous() {
-            if let Some(curr) = self.peek_token() {
-                return prev.line < curr.line;
+        if let Some((_, prev_pos)) = self.tokens.get(self.current.saturating_sub(1)) {
+            if let Some((_, curr_pos)) = self.tokens.get(self.current) {
+                return prev_pos.0 < curr_pos.0;
             }
         }
         false
     }
 
     pub fn expect_identifier(&mut self, message: &str) -> ParseResult<Box<str>> {
-        if let Some(TokenType::Identifier(name)) = self.peek_token_type().cloned() {
+        if let Some(Token::Identifier(name)) = self.peek().cloned() {
             self.advance();
             Ok(name.into_boxed_str())
         } else {            
-            Err(parser_error_at_current_mut!(self, "Expected identifier"))
+            Err(parser_error_at_current_mut!(self, message))
         }
     }
 
@@ -278,8 +267,7 @@ impl Parser {
         let stmt = self.parse_statement()?;
         
         // Ensure we've consumed all tokens
-        if !self.is_at_end() && !matches!(self.peek_token_type(), Some(TokenType::EOF)) {
-            let token = self.peek_token().unwrap();
+        if !self.is_at_end() && !matches!(self.peek(), Some(Token::EOF)) {
             return Err(parser_error_at_current!(self, "Unexpected token after statement"));
         }
         
@@ -294,8 +282,7 @@ impl Parser {
         let expr = self.parse_expression()?;
         
         // Ensure we've consumed all tokens
-        if !self.is_at_end() && !matches!(self.peek_token_type(), Some(TokenType::EOF)) {
-            let token = self.peek_token().unwrap();
+        if !self.is_at_end() && !matches!(self.peek(), Some(Token::EOF)) {
             return Err(parser_error_at_current!(self, "Unexpected token after expression"));
         }
         
@@ -312,29 +299,13 @@ impl Parser {
     }
 
     // TODO delete
-    // Helper method to handle parsing of "enum" keyword which is reserved in strict mode
-    pub fn handle_reserved_word(&self, word: &str) -> ParseResult<()> {
-        if self.state.in_strict_mode {
-            let reserved_words = ["implements", "interface", "package", "private", "protected", "public", "enum", "eval", "arguments"];
-            
-            if reserved_words.contains(&word) {
-                let token = self.previous().unwrap();
-                return Err(parser_error_at_current!(self, "'{}' is a reserved word in strict mode", word));
-            }
-        }
-        
-        Ok(())
-    }
-
     // Helper method to validate variable names
     pub fn validate_variable_name(&self, name: &str) -> ParseResult<()> {
         if self.state.in_strict_mode {
             if name == "eval" || name == "arguments" {
-                let token = self.previous().unwrap();
                 return Err(parser_error_at_current!(self, "'{}' cannot be used as a variable name in strict mode", name));
             }
         }
-        
         Ok(())
     }
 
@@ -345,11 +316,11 @@ impl Parser {
         for param in params {
             if let Expression::Identifier(name) = param {
                 if self.state.in_strict_mode && (name.as_ref() == "eval" || name.as_ref() == "arguments") {
-                    return Err(parser_error_at_previous!(self, "'{}' cannot be used as a parameter name in strict mode", name));
+                    // TODO should be previous so backtrack one?
+                    return Err(parser_error_at_current!(self, "'{}' cannot be used as a parameter name in strict mode", name));
                 }
-                
                 if !seen_params.insert(name.clone()) {
-                    return Err(parser_error_at_previous!(self, "Duplicate parameter name '{}'", name));
+                    return Err(parser_error_at_current!(self, "Duplicate parameter name '{}'", name));
                 }
             }
         }
@@ -360,14 +331,14 @@ impl Parser {
     // Helper method to handle octal literals in strict mode
     pub fn validate_octal_literal(&self, value: &str) -> ParseResult<()> {
         if self.state.in_strict_mode && value.starts_with('0') && !value.starts_with("0x") && !value.starts_with("0b") && !value.starts_with("0o") {
-            return Err(parser_error_at_previous!(self, "Octal literals are not allowed in strict mode"));
+            // TODO should be previous so backtrack one?
+            return Err(parser_error_at_current!(self, "Octal literals are not allowed in strict mode"));
         }
-        
         Ok(())
     }
 
     // Helper method to parse a list of elements separated by commas
-    pub fn parse_comma_separated_list<T, F>(&mut self, terminator: &TokenType, parser_fn: F) -> ParseResult<Vec<T>>
+    pub fn parse_comma_separated_list<T, F>(&mut self, terminator: &Token, parser_fn: F) -> ParseResult<Vec<T>>
     where
         F: Fn(&mut Self) -> ParseResult<T>,
     {
@@ -377,7 +348,7 @@ impl Parser {
             loop {
                 elements.push(parser_fn(self)?);
                 
-                if !self.match_token(&TokenType::Comma) {
+                if !self.match_token(&Token::Comma) {
                     break;
                 }
                 
@@ -396,9 +367,9 @@ impl Parser {
     pub fn parse_arguments(&mut self) -> ParseResult<Vec<Argument>> {
         let mut args = Vec::new();
         
-        if !self.check(&TokenType::RightParen) {
+        if !self.check(&Token::RightParen) {
             loop {
-                if self.match_token(&TokenType::Ellipsis) {
+                if self.match_token(&Token::Ellipsis) {
                     // Spread argument
                     let expr = self.parse_expression()?;
                     args.push(Argument::Spread(expr));
@@ -408,40 +379,40 @@ impl Parser {
                     args.push(Argument::Expression(expr));
                 }
                 
-                if !self.match_token(&TokenType::Comma) {
+                if !self.match_token(&Token::Comma) {
                     break;
                 }
                 
                 // Handle trailing comma
-                if self.check(&TokenType::RightParen) {
+                if self.check(&Token::RightParen) {
                     break;
                 }
             }
         }
-        
-        self.consume(&TokenType::RightParen, "Expected ')' after arguments")?;
-        
+
+        self.consume(&Token::RightParen, "Expected ')' after arguments")?;
+
         Ok(args)
     }
 
     // Property key parsing for object literals, class members, and destructuring patterns
     pub fn parse_property_key(&mut self) -> ParseResult<PropertyKey> {
-        if self.match_token(&TokenType::LeftBracket) {
+        if self.match_token(&Token::LeftBracket) {
             let expr = self.parse_expression()?;
-            self.consume(&TokenType::RightBracket, "Expected ']' after computed property key")?;
+            self.consume(&Token::RightBracket, "Expected ']' after computed property key")?;
             Ok(PropertyKey::Computed(expr))
-        } else if self.match_token(&TokenType::Hash) {
+        } else if self.match_token(&Token::Hash) {
             let name = self.expect_identifier("Expected private identifier name")?;
             Ok(PropertyKey::PrivateIdentifier(name))
-        } else if let Some(TokenType::StringLiteral(_)) = self.peek_token_type() {
-            if let TokenType::StringLiteral(s) = self.advance().unwrap().token_type.clone() {
+        } else if let Some(Token::StringLiteral(_)) = self.peek() {
+            if let Token::StringLiteral(s) = self.advance().unwrap().clone() {
                 Ok(PropertyKey::StringLiteral(s.into_boxed_str()))
             } else {
                 unreachable!()
             }
-        } else if let Some(TokenType::NumberLiteral(_)) = self.peek_token_type() {
-            if let TokenType::NumberLiteral(n) = self.advance().unwrap().token_type {
-                Ok(PropertyKey::NumericLiteral(n))
+        } else if let Some(Token::NumberLiteral(_)) = self.peek() {
+            if let Token::NumberLiteral(n) = self.advance().unwrap() {
+                Ok(PropertyKey::NumericLiteral(*n))
             } else {
                 unreachable!()
             }

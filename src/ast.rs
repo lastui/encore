@@ -70,22 +70,16 @@ pub enum LoopStatement {
         body: Box<Statement>,
     },
     ForIn {
-        left: ForInOfLeft,
+        left: ForInit,
         right: Expression,
         body: Box<Statement>,
     },
     ForOf {
-        left: ForInOfLeft,
+        left: ForInit,
         right: Expression,
         body: Box<Statement>,
         is_await: bool,
     },
-}
-
-#[derive(Debug, Clone)]
-pub enum ForInOfLeft {
-    Declaration(VariableDeclaration),
-    Pattern(Expression),
 }
 
 #[derive(Debug, Clone)]
@@ -186,8 +180,8 @@ pub enum ExportDefaultDeclaration {
 
 #[derive(Debug, Clone)]
 pub enum ForInit {
-    Variable(VariableDeclaration),
-    Expression(Expression),
+    Declaration(VariableDeclaration),
+    Pattern(Expression),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -202,33 +196,6 @@ pub struct VariableDeclarator {
     pub id: Expression, // TODO maybe tighter
     pub init: Option<Expression>,
 }
-
-//
-//// TODO delete
-//#[derive(Debug, Clone)]
-//pub enum Pattern {
-    //Identifier(Box<str>),
-    //ObjectPattern(Vec<ObjectPatternProperty>),
-    //ArrayPattern(Vec<Option<Pattern>>),
-    //RestElement(Box<Pattern>),
-    //AssignmentPattern {
-        //left: Box<Pattern>,
-        //right: Expression,
-    //},
-//}
-
-/*
-#[derive(Debug, Clone)]
-pub enum ObjectPatternProperty {
-    Property {
-        key: PropertyKey,
-        value: Expression,
-        computed: bool,
-        shorthand: bool,
-    },
-    Spread(Box<Expression>),
-    //Rest(Box<Pattern>),
-}*/
 
 #[derive(Debug, Clone)]
 pub struct CatchClause {
@@ -320,10 +287,7 @@ pub enum Expression {
         arguments: Vec<Argument>,
         optional: bool,
     },
-    New {
-        callee: Box<Expression>,
-        arguments: Vec<Argument>,
-    },
+    New(Box<Expression>),
     Conditional {
         test: Box<Expression>,
         consequent: Box<Expression>,
@@ -479,6 +443,7 @@ pub enum BinaryOperator {
     RightShift,
     UnsignedRightShift,
     In,
+    Of,
     InstanceOf,
 }
 
