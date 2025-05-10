@@ -1,21 +1,15 @@
 //! JavaScript parser module
 //! 
-//! This module contains the parser for JavaScript code.
-//! It has been split into multiple files for better maintainability.
+//! This module provides a composable, extensible parser for JavaScript code.
 
-mod error;
-mod state;
-mod core;
-mod expressions;
-mod statements;
-mod patterns;
-mod functions;
-mod classes;
-mod modules;
 mod asi;
+mod error;
+mod stream;
+mod context;
+mod parser;
+mod combinator;
 
-pub use self::core::Parser;
-
-mod prelude;
-
-pub use prelude::*;
+// Public exports
+pub use self::parser::Parser;
+pub use self::combinator::ParserCombinator;
+pub use self::error::{ParserError, ParseResult};

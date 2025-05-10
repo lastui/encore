@@ -13,12 +13,14 @@ pub enum LexicalContext {
     LoopParameters,
     LoopBody,
     SwitchBody,
+    ModuleBody { allow_await: bool },
 }
 
 impl fmt::Display for LexicalContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Default => write!(f, "global"),
+            Self::ModuleBody { allow_await: _ } => write!(f, "module"),
             Self::PropertyKey => write!(f, "property key"),
             Self::MemberAccess => write!(f, "member access"),
             Self::ImportExport => write!(f, "import export"),
@@ -38,14 +40,6 @@ impl fmt::Display for LexicalContext {
 
 impl LexicalContext {
 
-    // Fast check if this context allows any keywords as identifiers
-    pub fn has_keywords_as_identifiers(&self) -> bool {
-        match self {
-            LexicalContext::Default => false,
-            _ => true,
-        }
-    }
-
     pub fn allows_token_as_identifier(&self, token: &Token) -> bool {
         match self {
             // In property contexts, all keywords can be identifiers except a few special ones
@@ -53,7 +47,7 @@ impl LexicalContext {
 
                 //let result = matches!(keyword, "default");
 
-                println!("Checking in MemberAccess with {:#?}", token);
+                //println!("Checking in MemberAccess with {:#?}", token);
 
                 if token == &Token::Default {
                     true
@@ -63,6 +57,10 @@ impl LexicalContext {
                     true
                 } else if token == &Token::Get {
                     true
+                } else if token == &Token::Set {
+                    true
+                } else if token == &Token::As {
+                    true
                 } else {
                     false
                 }
@@ -71,8 +69,25 @@ impl LexicalContext {
                 //false
             },
             Self::PropertyKey => {
+
+                if token == &Token::Default {
+                    true
+                } else if token == &Token::From {
+                    true
+                } else if token == &Token::For {
+                    true
+                } else if token == &Token::Get {
+                    true
+                } else if token == &Token::Set {
+                    true
+                } else if token == &Token::As {
+                    true
+                } else {
+                    false
+                }
+
                 //println!("Currently in PropertyKey with {:#?}", keyword);
-                false
+                //false
             },
 
             // In import/export contexts, specific keywords are allowed as identifiers
@@ -135,6 +150,10 @@ impl LexicalContext {
                 //println!("Currently in Default with {:#?}", keyword);
                 false
             },
-        }
+
+            Self::ModuleBody { allow_await: _ } => {
+                false
+            },
+        }   
     }
 }

@@ -24,7 +24,7 @@
 //{ x: y => 3 };
 
 
-for (let i=0; i<this.for; i++);
+//for (let i=0; i<this.for; i++);
 
 for (const x of y) {
 

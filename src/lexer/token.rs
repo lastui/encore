@@ -125,7 +125,7 @@ pub enum Token {
     From,
     As,
     // Sentinel
-    EOF,
+    EOS,
 }
 
 impl Token {
@@ -221,7 +221,7 @@ impl Token {
             Token::As => Some("as"),
             
             // Sentinel
-            Token::EOF => None,
+            Token::EOS => None,
         }
     }
     

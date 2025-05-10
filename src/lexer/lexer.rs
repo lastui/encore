@@ -5,7 +5,7 @@ pub struct Lexer<'a> {
     source: &'a str,
     bytes: &'a [u8],
     source_len: usize,
-    tokens: Vec<(Token, (usize, usize))>,
+    tokens: Vec<(Token, [usize; 2])>,
     start: usize,
     current: usize,
     line: usize,
@@ -14,10 +14,10 @@ pub struct Lexer<'a> {
     previous_char: char,
 }
 
-macro_rules! add_token {
-    ($self:expr, $token_type:expr) => {
-        $self.tokens.push(($token_type, ($self.line, $self.column)))
-    };
+macro_rules! emit_token {
+    ($lexer:expr, $token:expr) => {
+        $lexer.tokens.push(($token, [$lexer.line, $lexer.column]))
+    }
 }
 
 impl<'a> Lexer<'a> {
@@ -185,7 +185,7 @@ impl<'a> Lexer<'a> {
         };
         
         // Add the token
-        add_token!(self, token_type);
+        emit_token!(self, token_type);
     }
 
     // Helper method to create an identifier token
@@ -195,13 +195,13 @@ impl<'a> Lexer<'a> {
         Token::Identifier(text.to_string())
     }
 
-    pub fn scan_tokens(&mut self) -> Result<Vec<(Token, (usize, usize))>, LexerError> {
+    pub fn scan_tokens(&mut self) -> Result<Vec<(Token, [usize; 2])>, LexerError> {
         while !self.is_at_end() {
             self.start = self.current;
             self.scan_token()?;
         }
         let _eof_column = self.column;
-        add_token!(self, Token::EOF);
+        emit_token!(self, Token::EOS);
         Ok(std::mem::take(&mut self.tokens))
     }
     
@@ -209,168 +209,168 @@ impl<'a> Lexer<'a> {
         let c = self.advance();
         
         match c {
-            '(' => add_token!(self, Token::LeftParen),
-            ')' => add_token!(self, Token::RightParen),
-            '{' => add_token!(self, Token::LeftBrace),
-            '}' => add_token!(self, Token::RightBrace),
-            '[' => add_token!(self, Token::LeftBracket),
-            ']' => add_token!(self, Token::RightBracket),
-            ',' => add_token!(self, Token::Comma),
-            ';' => add_token!(self, Token::Semicolon),
-            ':' => add_token!(self, Token::Colon),
-            '#' => add_token!(self, Token::Hash),
+            '(' => emit_token!(self, Token::LeftParen),
+            ')' => emit_token!(self, Token::RightParen),
+            '{' => emit_token!(self, Token::LeftBrace),
+            '}' => emit_token!(self, Token::RightBrace),
+            '[' => emit_token!(self, Token::LeftBracket),
+            ']' => emit_token!(self, Token::RightBracket),
+            ',' => emit_token!(self, Token::Comma),
+            ';' => emit_token!(self, Token::Semicolon),
+            ':' => emit_token!(self, Token::Colon),
+            '#' => emit_token!(self, Token::Hash),
             
             '.' => {
                 if self.match_char('.') && self.match_char('.') {
-                    add_token!(self, Token::Ellipsis);
+                    emit_token!(self, Token::Ellipsis);
                 } else {
-                    add_token!(self, Token::Dot);
+                    emit_token!(self, Token::Dot);
                 }
             },                
             '+' => {
                 if self.match_char('+') {
-                    add_token!(self, Token::PlusPlus);
+                    emit_token!(self, Token::PlusPlus);
                 } else if self.match_char('=') {
-                    add_token!(self, Token::PlusEqual);
+                    emit_token!(self, Token::PlusEqual);
                 } else {
-                    add_token!(self, Token::Plus);
+                    emit_token!(self, Token::Plus);
                 }
             },
             '-' => {
                 if self.match_char('-') {
-                    add_token!(self, Token::MinusMinus);
+                    emit_token!(self, Token::MinusMinus);
                 } else if self.match_char('=') {
-                    add_token!(self, Token::MinusEqual);
+                    emit_token!(self, Token::MinusEqual);
                 } else {
-                    add_token!(self, Token::Minus);
+                    emit_token!(self, Token::Minus);
                 }
             },
             '%' => {
                 if self.match_char('=') {
-                    add_token!(self, Token::PercentEqual);
+                    emit_token!(self, Token::PercentEqual);
                 } else {
-                    add_token!(self, Token::Percent);
+                    emit_token!(self, Token::Percent);
                 }
             },
             '^' => {
                 if self.match_char('=') {
-                    add_token!(self, Token::CaretEqual);
+                    emit_token!(self, Token::CaretEqual);
                 } else {
-                    add_token!(self, Token::Caret);
+                    emit_token!(self, Token::Caret);
                 }
             },
             '*' => {
                 if self.match_char('*') {
                     if self.match_char('=') {
-                        add_token!(self, Token::StarStarEqual);
+                        emit_token!(self, Token::StarStarEqual);
                     } else {
-                        add_token!(self, Token::StarStar);
+                        emit_token!(self, Token::StarStar);
                     }
                 } else if self.match_char('=') {
-                    add_token!(self, Token::StarEqual);
+                    emit_token!(self, Token::StarEqual);
                 } else {
-                    add_token!(self, Token::Star);
+                    emit_token!(self, Token::Star);
                 }
             },
             '/' => self.handle_slash()?,
             '!' => {
                 if self.match_char('=') {
                     if self.match_char('=') {
-                        add_token!(self, Token::BangEqualEqual);
+                        emit_token!(self, Token::BangEqualEqual);
                     } else {
-                        add_token!(self, Token::BangEqual);
+                        emit_token!(self, Token::BangEqual);
                     }
                 } else {
-                    add_token!(self, Token::Bang);
+                    emit_token!(self, Token::Bang);
                 }
             },
             '=' => {
                 if self.match_char('>') {
-                    add_token!(self, Token::Arrow);
+                    emit_token!(self, Token::Arrow);
                 } else if self.match_char('=') {
                     if self.match_char('=') {
-                        add_token!(self, Token::EqualEqualEqual);
+                        emit_token!(self, Token::EqualEqualEqual);
                     } else {
-                        add_token!(self, Token::EqualEqual);
+                        emit_token!(self, Token::EqualEqual);
                     }
                 } else {
-                    add_token!(self, Token::Equal);
+                    emit_token!(self, Token::Equal);
                 }
             },
             
             '<' => {
                 if self.match_char('=') {
-                    add_token!(self, Token::LessEqual);
+                    emit_token!(self, Token::LessEqual);
                 } else if self.match_char('<') {
                     if self.match_char('=') {
-                        add_token!(self, Token::LessLessEqual);
+                        emit_token!(self, Token::LessLessEqual);
                     } else {
-                        add_token!(self, Token::LessLess);
+                        emit_token!(self, Token::LessLess);
                     }
                 } else {
-                    add_token!(self, Token::Less);
+                    emit_token!(self, Token::Less);
                 }
             },
             
             '>' => {
                 if self.match_char('=') {
-                    add_token!(self, Token::GreaterEqual);
+                    emit_token!(self, Token::GreaterEqual);
                 } else if self.match_char('>') {
                     if self.match_char('>') {
                         if self.match_char('=') {
-                            add_token!(self, Token::GreaterGreaterGreaterEqual);
+                            emit_token!(self, Token::GreaterGreaterGreaterEqual);
                         } else {
-                            add_token!(self, Token::GreaterGreaterGreater);
+                            emit_token!(self, Token::GreaterGreaterGreater);
                         }
                     } else if self.match_char('=') {
-                        add_token!(self, Token::GreaterGreaterEqual);
+                        emit_token!(self, Token::GreaterGreaterEqual);
                     } else {
-                        add_token!(self, Token::GreaterGreater);
+                        emit_token!(self, Token::GreaterGreater);
                     }
                 } else {
-                    add_token!(self, Token::Greater);
+                    emit_token!(self, Token::Greater);
                 }
             },
             
             '&' => {
                 if self.match_char('&') {
                     if self.match_char('=') {
-                        add_token!(self, Token::AmpersandAmpersandEqual);
+                        emit_token!(self, Token::AmpersandAmpersandEqual);
                     } else {
-                        add_token!(self, Token::AmpersandAmpersand);
+                        emit_token!(self, Token::AmpersandAmpersand);
                     }
                 } else if self.match_char('=') {
-                    add_token!(self, Token::AmpersandEqual);
+                    emit_token!(self, Token::AmpersandEqual);
                 } else {
-                    add_token!(self, Token::Ampersand);
+                    emit_token!(self, Token::Ampersand);
                 }
             },
             
             '|' => {
                 if self.match_char('|') {
                     if self.match_char('=') {
-                        add_token!(self, Token::PipePipeEqual);
+                        emit_token!(self, Token::PipePipeEqual);
                     } else {
-                        add_token!(self, Token::PipePipe);
+                        emit_token!(self, Token::PipePipe);
                     }
                 } else if self.match_char('=') {
-                    add_token!(self, Token::PipeEqual);
+                    emit_token!(self, Token::PipeEqual);
                 } else {
-                    add_token!(self, Token::Pipe);
+                    emit_token!(self, Token::Pipe);
                 }
             },
-            '~' => add_token!(self, Token::Tilde),            
+            '~' => emit_token!(self, Token::Tilde),            
             '?' => {
                 if self.match_char('?') {
                     if self.match_char('=') {
-                        add_token!(self, Token::QuestionQuestionEqual);
+                        emit_token!(self, Token::QuestionQuestionEqual);
                     } else {
-                        add_token!(self, Token::QuestionQuestion);
+                        emit_token!(self, Token::QuestionQuestion);
                     }
                 } else if self.match_char('.') {
-                    add_token!(self, Token::QuestionDot);
+                    emit_token!(self, Token::QuestionDot);
                 } else {
-                    add_token!(self, Token::Question);
+                    emit_token!(self, Token::Question);
                 }
             },
             
@@ -444,11 +444,11 @@ impl<'a> Lexer<'a> {
         } else if self.match_char('*') {
             self.block_comment()?;
         } else if self.match_char('=') {
-            add_token!(self, Token::SlashEqual);
+            emit_token!(self, Token::SlashEqual);
         } else if self.is_regexp_start() {
             self.regexp()?;
         } else {
-            add_token!(self, Token::Slash);
+            emit_token!(self, Token::Slash);
         }
         Ok(())
     }
@@ -562,7 +562,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        add_token!(self, Token::RegExpLiteral(pattern, flags));
+        emit_token!(self, Token::RegExpLiteral(pattern, flags));
 
         Ok(())
     }
@@ -702,7 +702,7 @@ impl<'a> Lexer<'a> {
         // Consume the closing backtick
         self.advance();
         
-        add_token!(self, Token::TemplateLiteral(parts));
+        emit_token!(self, Token::TemplateLiteral(parts));
         
         Ok(())
     }
@@ -783,7 +783,7 @@ impl<'a> Lexer<'a> {
         // Consume the closing quote
         self.advance();        
 
-        add_token!(self, Token::StringLiteral(value));
+        emit_token!(self, Token::StringLiteral(value));
 
         Ok(())
     }
@@ -1032,7 +1032,7 @@ impl<'a> Lexer<'a> {
                 ));
             }
 
-            add_token!(self, Token::BigIntLiteral(value_str));
+            emit_token!(self, Token::BigIntLiteral(value_str));
 
             return Ok(());
         }
@@ -1045,14 +1045,14 @@ impl<'a> Lexer<'a> {
            !value_str.contains('E') && value_str.len() < 10 {
             // For small integers, parse directly to avoid floating point conversion
             if let Ok(int_val) = value_str.parse::<i32>() {
-                add_token!(self, Token::NumberLiteral(int_val as f64));
+                emit_token!(self, Token::NumberLiteral(int_val as f64));
                 return Ok(());
             }
         }
         
         match value_str.parse::<f64>() {
             Ok(value) => {
-                add_token!(self, Token::NumberLiteral(value));
+                emit_token!(self, Token::NumberLiteral(value));
                 Ok(())
             },
             Err(_) => Err(LexerError::new(
@@ -1091,7 +1091,7 @@ impl<'a> Lexer<'a> {
             // Parse as binary
             match i64::from_str_radix(&value_str.replace('_', ""), 2) {
                 Ok(_) => {
-                    add_token!(self, Token::BigIntLiteral(format!("0b{}", value_str)));
+                    emit_token!(self, Token::BigIntLiteral(format!("0b{}", value_str)));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(
@@ -1107,7 +1107,7 @@ impl<'a> Lexer<'a> {
             // Parse as binary and convert to f64
             match i64::from_str_radix(&value_str.replace('_', ""), 2) {
                 Ok(value) => {
-                    add_token!(self, Token::NumberLiteral(value as f64));
+                    emit_token!(self, Token::NumberLiteral(value as f64));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(
@@ -1147,7 +1147,7 @@ impl<'a> Lexer<'a> {
             // Parse as octal
             match i64::from_str_radix(&value_str.replace('_', ""), 8) {
                 Ok(_) => {
-                    add_token!(self, Token::BigIntLiteral(format!("0o{}", value_str)));
+                    emit_token!(self, Token::BigIntLiteral(format!("0o{}", value_str)));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(
@@ -1163,7 +1163,7 @@ impl<'a> Lexer<'a> {
             // Parse as octal and convert to f64
             match i64::from_str_radix(&value_str.replace('_', ""), 8) {
                 Ok(value) => {
-                    add_token!(self, Token::NumberLiteral(value as f64));
+                    emit_token!(self, Token::NumberLiteral(value as f64));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(
@@ -1203,7 +1203,7 @@ impl<'a> Lexer<'a> {
             // Parse as hex
             match i64::from_str_radix(&value_str.replace('_', ""), 16) {
                 Ok(_) => {
-                    add_token!(self, Token::BigIntLiteral(format!("0x{}", value_str)));
+                    emit_token!(self, Token::BigIntLiteral(format!("0x{}", value_str)));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(
@@ -1219,7 +1219,7 @@ impl<'a> Lexer<'a> {
             // Parse as hex and convert to f64
             match i64::from_str_radix(&value_str.replace('_', ""), 16) {
                 Ok(value) => {
-                    add_token!(self, Token::NumberLiteral(value as f64));
+                    emit_token!(self, Token::NumberLiteral(value as f64));
                     Ok(())
                 },
                 Err(_) => Err(LexerError::new(

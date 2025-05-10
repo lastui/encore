@@ -1,5 +1,5 @@
 use crate::lexer::{LexerError, TemplatePart, Token};
-use super::core::Parser;
+use super::parser::Parser;
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -19,12 +19,12 @@ impl ParserError {
 
         let context_stack = parser.get_context_stack_info();
             
-        let token = parser.peek().unwrap_or_else(|| &Token::EOF);
+        let token = parser.peek();
 
         // Infer token length based on its type
         let token_length = match token {
 
-            Token::EOF => 0,
+            Token::EOS => 0,
 
             Token::LeftParen
             | Token::RightParen
@@ -85,7 +85,6 @@ impl ParserError {
             | Token::GreaterGreaterEqual
             | Token::GreaterGreaterGreater
             | Token::LessLessEqual
-            | Token::AmpersandAmpersand
             | Token::AmpersandAmpersandEqual
             | Token::PipePipeEqual
             | Token::Ellipsis
@@ -154,12 +153,12 @@ impl ParserError {
             Token::Constructor => 11,
 
             // Literals
-            Token::Identifier(name) => name.len(),
-            Token::StringLiteral(value) => value.len() + 2, // Account for quotation marks
-            Token::NumberLiteral(value) => value.to_string().len(),
-            Token::BigIntLiteral(value) => value.len() + 1, // Account for the trailing 'n'
-            Token::RegExpLiteral(pattern, flags) => pattern.len() + flags.len() + 2, // Account for the slashes
-            Token::TemplateLiteral(parts) => parts.iter().fold(2, |acc, part| {
+            Token::Identifier(ref name) => name.len(),
+            Token::StringLiteral(ref value) => value.len() + 2, // Account for quotation marks
+            Token::NumberLiteral(ref value) => value.to_string().len(),
+            Token::BigIntLiteral(ref value) => value.len() + 1, // Account for the trailing 'n'
+            Token::RegExpLiteral(ref pattern, ref flags) => pattern.len() + flags.len() + 2, // Account for the slashes
+            Token::TemplateLiteral(ref parts) => parts.iter().fold(2, |acc, part| {
                 acc + match part {
                     TemplatePart::String(s) => s.len(),
                     TemplatePart::Expression(e) => e.len(),
@@ -168,7 +167,7 @@ impl ParserError {
 
         };
 
-        let (line, column) = parser.get_current_position();
+        let [line, column] = parser.get_current_position();
 
         let col = column - token_length;
 
@@ -199,11 +198,6 @@ impl ParserError {
     /// Create a parser error from the current token with an immutable reference
     pub fn at_current(parser: &Parser, message: &str) -> Self {
         Self::new(parser, message)
-    }
-    
-    /// Create a parser error from the current token with a mutable reference
-    pub fn at_current_mut(parser: &mut Parser, message: &str) -> Self {
-        Self::new(&*parser, message)
     }
 
 }
@@ -250,7 +244,7 @@ impl fmt::Display for ParserError {
         }
 
         // Print current token information if available
-        if !matches!(self.current_token, Token::EOF) {
+        if !matches!(self.current_token, Token::EOS) {
             writeln!(f, "\nCurrent token: {:#?}", self.current_token)?;
         }
         
@@ -292,7 +286,7 @@ impl From<LexerError> for ParserError {
             source_line: None,
             source_span: None,
             context_stack: Vec::new(),
-            current_token: Token::EOF,
+            current_token: Token::EOS,
         }
     }
 }
@@ -344,23 +338,3 @@ fn extract_source_line_with_context(source: &str, line_number: usize, column: us
 }
 
 pub type ParseResult<T> = Result<T, ParserError>;
-
-#[macro_export]
-macro_rules! parser_error_at_current {
-    ($self:expr, $message:expr) => {
-        $crate::parser::error::ParserError::at_current($self, $message)
-    };
-    ($self:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::parser::error::ParserError::at_current($self, &format!($fmt, $($arg)*))
-    };
-}
-
-#[macro_export]
-macro_rules! parser_error_at_current_mut {
-    ($self:expr, $message:expr) => {
-        $crate::parser::error::ParserError::at_current_mut($self, $message)
-    };
-    ($self:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::parser::error::ParserError::at_current_mut($self, &format!($fmt, $($arg)*))
-    };
-}
