@@ -1,6 +1,7 @@
 mod ast;
 mod lexer;
 mod parser;
+mod grammar;
 
 use std::path::PathBuf;
 use std::fs;
@@ -41,9 +42,11 @@ fn run<T: ?Sized>(file: &str) -> Result<(), Box<dyn std::error::Error>> where st
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.scan_tokens()?;
     
-    let mut parser = Parser::new(tokens);
-    let ast = parser.parse()?;
-    
+
+    let mut parser = Parser::new(&tokens);
+    parser.attach_source(&source);
+    let ast = parser.parse_script()?;
+
     println!("AST: {:#?}", ast);
     
     Ok(())

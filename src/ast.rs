@@ -1,8 +1,17 @@
-#[derive(Debug, Clone)]
+use std::fmt;
+
+/// Represents a location in the source code
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceLocation {
+    pub start: [usize; 2], // (line, column)
+    pub end: [usize; 2],   // (line, column)
+}
+
+/// Represents a JavaScript program
+#[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    pub source_type: SourceType,
     pub body: Vec<Statement>,
-    pub comments: Vec<Comment>,
+    pub source_type: SourceType,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -11,183 +20,260 @@ pub enum SourceType {
     Module,
 }
 
-#[derive(Debug, Clone)]
+/// Represents a JavaScript statement
+#[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
-    Empty,
-    Block(Vec<Statement>),
-    Expression(Expression),
-    If {
-        test: Expression,
-        consequent: Box<Statement>,
-        alternate: Option<Box<Statement>>,
-    },
-    Loop(LoopStatement),
+    ExpressionStatement(ExpressionStatement),
+    BlockStatement(BlockStatement),
+    EmptyStatement,
+    DebuggerStatement,
+    WithStatement(WithStatement),
+    ReturnStatement(ReturnStatement),
+    LabeledStatement(LabeledStatement),
+    BreakStatement(BreakStatement),
+    ContinueStatement(ContinueStatement),
+    IfStatement(IfStatement),
+    SwitchStatement(SwitchStatement),
+    ThrowStatement(ThrowStatement),
+    TryStatement(TryStatement),
+    WhileStatement(WhileStatement),
+    DoWhileStatement(DoWhileStatement),
+    ForStatement(ForStatement),
+    ForInStatement(ForInStatement),
+    ForOfStatement(ForOfStatement),
     Declaration(Declaration),
-    Return(Option<Expression>),
-    Labeled {
-        label: Box<str>,
-        body: Box<Statement>,
-    },
-    Break(Option<Box<str>>),
-    Continue(Option<Box<str>>),
-    Try {
-        block: Box<Statement>,
-        handler: Option<CatchClause>,
-        finalizer: Option<Box<Statement>>,
-    },
-    Throw(Expression),
-    Switch {
-        discriminant: Expression,
-        cases: Vec<SwitchCase>,
-    },
-    Import {
-        specifiers: Vec<ImportSpecifier>,
-        source: Box<str>,
-        assertions: Vec<ImportAssertion>,
-    },
-    Export(ExportDeclaration),
-    With {
-        object: Expression,
-        body: Box<Statement>,
-    },
-    Debugger,
 }
 
-#[derive(Debug, Clone)]
-pub enum LoopStatement {
-    While {
-        test: Expression,
-        body: Box<Statement>,
-    },
-    DoWhile {
-        body: Box<Statement>,
-        test: Expression,
-    },
-    For {
-        init: Option<ForInit>,
-        test: Option<Expression>,
-        update: Option<Expression>,
-        body: Box<Statement>,
-    },
-    ForIn {
-        left: ForInOfLeft,
-        right: Expression,
-        body: Box<Statement>,
-    },
-    ForOf {
-        left: ForInOfLeft,
-        right: Expression,
-        body: Box<Statement>,
-        is_await: bool,
-    },
+/// Represents a JavaScript expression
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expression {
+    Identifier(Identifier),
+    Literal(Literal),
+    ThisExpression(ThisExpression),
+    ArrayExpression(ArrayExpression),
+    ObjectExpression(ObjectExpression),
+    FunctionExpression(FunctionExpression),
+    ArrowFunctionExpression(ArrowFunctionExpression),
+    ClassExpression(ClassExpression),
+    TaggedTemplateExpression(TaggedTemplateExpression),
+    MemberExpression(MemberExpression),
+    SuperExpression(SuperExpression),
+    MetaProperty(MetaProperty),
+    NewExpression(NewExpression),
+    CallExpression(CallExpression),
+    UpdateExpression(UpdateExpression),
+    AwaitExpression(AwaitExpression),
+    UnaryExpression(UnaryExpression),
+    BinaryExpression(BinaryExpression),
+    LogicalExpression(LogicalExpression),
+    ConditionalExpression(ConditionalExpression),
+    YieldExpression(YieldExpression),
+    AssignmentExpression(AssignmentExpression),
+    SequenceExpression(SequenceExpression),
 }
 
-#[derive(Debug, Clone)]
-pub enum ForInOfLeft {
-    Declaration(VariableDeclaration),
-    Pattern(Expression),
-}
-
-#[derive(Debug, Clone)]
+/// Represents a JavaScript declaration
+#[derive(Debug, Clone, PartialEq)]
 pub enum Declaration {
-    Variable(VariableDeclaration),
-    Function(FunctionDeclaration),
-    Class(ClassDeclaration),
+    VariableDeclaration(VariableDeclaration),
+    FunctionDeclaration(FunctionDeclaration),
+    ClassDeclaration(ClassDeclaration),
+    ImportDeclaration(ImportDeclaration),
+    ExportNamedDeclaration(ExportNamedDeclaration),
+    ExportDefaultDeclaration(ExportDefaultDeclaration),
+    ExportAllDeclaration(ExportAllDeclaration),
 }
 
-#[derive(Debug, Clone)]
-pub struct VariableDeclaration {
-    pub declarations: Vec<VariableDeclarator>,
-    pub kind: VariableKind,
+/// Represents a JavaScript pattern (destructuring)
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    Identifier(Identifier),
+    ObjectPattern(ObjectPattern),
+    ArrayPattern(ArrayPattern),
+    RestElement(RestElement),
+    AssignmentPattern(AssignmentPattern),
+    MemberExpression(MemberExpression),
 }
 
-#[derive(Debug, Clone)]
-pub struct FunctionDeclaration {
-    pub id: Box<str>,
-    pub params: Vec<Pattern>,
-    pub body: Vec<Statement>,
-    pub is_async: bool,
-    pub is_generator: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct ClassDeclaration {
-    pub id: Box<str>,
-    pub super_class: Option<Expression>,
-    pub body: Vec<ClassMember>,
-}
-
-#[derive(Debug, Clone)]
-pub enum ClassMember {
-    Constructor {
-        params: Vec<Pattern>,
-        body: Vec<Statement>,
-    },
-    Method {
-        key: PropertyKey,
-        value: MethodDefinition,
-        kind: MethodKind,
-        is_static: bool,
-    },
-    Property {
-        key: PropertyKey,
-        value: Option<Expression>,
-        is_static: bool,
-    },
-    StaticBlock {
-        body: Vec<Statement>,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub struct MethodDefinition {
-    pub params: Vec<Pattern>,
-    pub body: Vec<Statement>,
-    pub is_async: bool,
-    pub is_generator: bool,
-}
-
-#[derive(Debug, Clone)]
-pub enum PropertyKey {
-    Identifier(Box<str>),
-    StringLiteral(Box<str>),
-    NumericLiteral(f64),
-    Computed(Expression),
-    PrivateIdentifier(Box<str>),
+/// Represents an identifier
+#[derive(Debug, Clone, PartialEq)]
+pub struct Identifier {
+    
+    pub name: Box<str>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum MethodKind {
-    Method,
-    Getter,
-    Setter,
+pub struct PrivateIdentifier {
+    pub name: Box<str>,
 }
 
-#[derive(Debug, Clone)]
-pub enum ExportDeclaration {
-    Named {
-        declaration: Option<Box<Declaration>>,
-        specifiers: Vec<ExportSpecifier>,
-        source: Option<Box<str>>,
-    },
-    Default(Box<ExportDefaultDeclaration>),
-    All {
-        source: Box<str>,
-        exported: Option<Box<str>>,
-    },
+/// Represents a literal value
+#[derive(Debug, Clone, PartialEq)]
+pub enum Literal {
+    StringLiteral(StringLiteral),
+    BooleanLiteral(BooleanLiteral),
+    NullLiteral(NullLiteral),
+    NumericLiteral(NumericLiteral),
+    BigIntLiteral(BigIntLiteral),
+    RegExpLiteral(RegExpLiteral),
 }
 
-#[derive(Debug, Clone)]
-pub enum ExportDefaultDeclaration {
-    Expression(Expression),
-    Function(FunctionDeclaration),
-    Class(ClassDeclaration),
+#[derive(Debug, Clone, PartialEq)]
+pub struct StringLiteral {
+    pub value: Box<str>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BooleanLiteral {
+    pub value: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NullLiteral {
+    
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumericLiteral {
+    pub value: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BigIntLiteral {
+    pub value: Box<str>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegExpLiteral {
+    pub pattern: Box<str>,
+    pub flags: Box<str>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockStatement {
+    pub body: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpressionStatement {
+    pub expression: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WithStatement {
+    pub object: Box<Expression>,
+    pub body: Box<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReturnStatement {
+    pub argument: Option<Box<Expression>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabeledStatement {
+    pub label: Identifier,
+    pub body: Box<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BreakStatement {
+    pub label: Option<Identifier>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContinueStatement {
+    pub label: Option<Identifier>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfStatement {
+    pub test: Box<Expression>,
+    pub consequent: Box<Statement>,
+    pub alternate: Option<Box<Statement>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchStatement {
+    pub discriminant: Box<Expression>,
+    pub cases: Vec<SwitchCase>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchCase {
+    pub test: Option<Box<Expression>>,
+    pub consequent: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThrowStatement {
+    pub argument: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TryStatement {
+    pub block: BlockStatement,
+    pub handler: Option<CatchClause>,
+    pub finalizer: Option<BlockStatement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CatchClause {
+    pub param: Option<Pattern>,
+    pub body: BlockStatement,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhileStatement {
+    pub test: Box<Expression>,
+    pub body: Box<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DoWhileStatement {
+    pub body: Box<Statement>,
+    pub test: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForStatement {
+    pub init: Option<ForInit>,
+    pub test: Option<Box<Expression>>,
+    pub update: Option<Box<Expression>>,
+    pub body: Box<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ForInit {
-    Variable(VariableDeclaration),
-    Expression(Expression),
+    VariableDeclaration(VariableDeclaration),
+    Expression(Box<Expression>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForInStatement {
+    pub left: ForInOf,
+    pub right: Box<Expression>,
+    pub body: Box<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForOfStatement {
+    pub left: ForInOf,
+    pub right: Box<Expression>,
+    pub body: Box<Statement>,
+    pub await_token: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForInOf {
+    VariableDeclaration(VariableDeclaration),
+    Pattern(Pattern),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariableDeclaration {
+    pub declarations: Vec<VariableDeclarator>,
+    pub kind: VariableKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -197,208 +283,43 @@ pub enum VariableKind {
     Const,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VariableDeclarator {
     pub id: Pattern,
-    pub init: Option<Expression>,
+    pub init: Option<Box<Expression>>,
 }
 
-#[derive(Debug, Clone)]
-pub enum Pattern {
-    Identifier(Box<str>),
-    ObjectPattern(Vec<ObjectPatternProperty>),
-    ArrayPattern(Vec<Option<Pattern>>),
-    RestElement(Box<Pattern>),
-    AssignmentPattern {
-        left: Box<Pattern>,
-        right: Expression,
-    },
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThisExpression {
+    
 }
 
-#[derive(Debug, Clone)]
-pub enum ObjectPatternProperty {
-    Property {
-        key: PropertyKey,
-        value: Pattern,
-        computed: bool,
-        shorthand: bool,
-    },
-    Rest(Box<Pattern>),
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayExpression {
+    pub elements: Vec<Option<Expression>>,
 }
 
-#[derive(Debug, Clone)]
-pub struct CatchClause {
-    pub param: Option<Pattern>,
-    pub body: Box<Statement>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectExpression {
+    pub properties: Vec<Property>,
 }
 
-#[derive(Debug, Clone)]
-pub struct SwitchCase {
-    pub test: Option<Expression>,
-    pub consequent: Vec<Statement>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct Property {
+    pub key: PropertyKey,
+    pub value: Box<Expression>,
+    pub kind: PropertyKind,
+    pub method: bool,
+    pub shorthand: bool,
+    pub computed: bool,
 }
 
-#[derive(Debug, Clone)]
-pub enum ImportSpecifier {
-    Named {
-        imported: Box<str>,
-        local: Box<str>,
-    },
-    Default(Box<str>),
-    Namespace(Box<str>),
-}
-
-#[derive(Debug, Clone)]
-pub struct ImportAssertion {
-    pub key: Box<str>,
-    pub value: Box<str>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExportSpecifier {
-    pub local: Box<str>,
-    pub exported: Box<str>,
-}
-
-#[derive(Debug, Clone)]
-pub enum Expression {
-    Identifier(Box<str>),
-    This,
-    Super,
+#[derive(Debug, Clone, PartialEq)]
+pub enum PropertyKey {
+    Identifier(Identifier),
+    PrivateIdentifier(PrivateIdentifier),
     Literal(Literal),
-    Array(Vec<Option<ArrayElement>>),
-    Object(Vec<ObjectProperty>),
-    Function {
-        id: Option<Box<str>>,
-        params: Vec<Pattern>,
-        body: Vec<Statement>,
-        is_async: bool,
-        is_generator: bool,
-    },
-    ArrowFunction {
-        params: Vec<Pattern>,
-        body: ArrowFunctionBody,
-        is_async: bool,
-    },
-    Class {
-        id: Option<Box<str>>,
-        super_class: Option<Box<Expression>>,
-        body: Vec<ClassMember>,
-    },
-    Unary {
-        operator: UnaryOperator,
-        argument: Box<Expression>,
-        prefix: bool,
-    },
-    Binary {
-        operator: BinaryOperator,
-        left: Box<Expression>,
-        right: Box<Expression>,
-    },
-    Logical {
-        operator: LogicalOperator,
-        left: Box<Expression>,
-        right: Box<Expression>,
-    },
-    Assignment {
-        operator: AssignmentOperator,
-        left: Box<Expression>,
-        right: Box<Expression>,
-    },
-    Member {
-        object: Box<Expression>,
-        property: Box<Expression>,
-        computed: bool,
-        optional: bool,
-    },
-    Call {
-        callee: Box<Expression>,
-        arguments: Vec<Argument>,
-        optional: bool,
-    },
-    New {
-        callee: Box<Expression>,
-        arguments: Vec<Argument>,
-    },
-    Conditional {
-        test: Box<Expression>,
-        consequent: Box<Expression>,
-        alternate: Box<Expression>,
-    },
-    TemplateLiteral {
-        quasis: Vec<Box<str>>,
-        expressions: Vec<Expression>,
-    },
-    TaggedTemplate {
-        tag: Box<Expression>,
-        quasi: Box<Expression>,
-    },
-    Sequence(Vec<Expression>),
-    Spread(Box<Expression>),
-    Yield {
-        argument: Option<Box<Expression>>,
-        delegate: bool,
-    },
-    Await(Box<Expression>),
-    OptionalChain {
-        base: Box<Expression>,
-        chain: Vec<OptionalChainElement>,
-    },
-    Import(Box<Expression>),
-    MetaProperty {
-        meta: Box<str>,
-        property: Box<str>,
-    },
-    PrivateName(Box<str>),
-    ChainExpression(Box<Expression>),
-}
-
-#[derive(Debug, Clone)]
-pub enum ArrayElement {
-    Expression(Expression),
-    Spread(Expression),
-    Hole,
-}
-
-#[derive(Debug, Clone)]
-pub enum Argument {
-    Expression(Expression),
-    Spread(Expression),
-}
-
-#[derive(Debug, Clone)]
-pub enum OptionalChainElement {
-    Property {
-        name: Box<str>,
-        computed: bool,
-    },
-    Call {
-        arguments: Vec<Argument>,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub enum ArrowFunctionBody {
-    Block(Vec<Statement>),
     Expression(Box<Expression>),
-}
-
-#[derive(Debug, Clone)]
-pub enum ObjectProperty {
-    Property {
-        key: PropertyKey,
-        value: Expression,
-        kind: PropertyKind,
-        computed: bool,
-        shorthand: bool,
-    },
-    Method {
-        key: PropertyKey,
-        value: MethodDefinition,
-        kind: MethodKind,
-        computed: bool,
-    },
-    Spread(Expression),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -408,43 +329,177 @@ pub enum PropertyKind {
     Set,
 }
 
-#[derive(Debug, Clone)]
-pub enum Literal {
-    Number(f64),
-    String(Box<str>),
-    Boolean(bool),
-    Null,
-    Undefined,
-    RegExp {
-        pattern: Box<str>,
-        flags: Box<str>,
-    },
-    BigInt(Box<str>),
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionExpression {
+    pub id: Option<Identifier>,
+    pub params: Vec<Pattern>,
+    pub body: BlockStatement,
+    pub generator: bool,
+    pub async_function: bool,
 }
 
-#[derive(Clone)]
-pub struct Comment {
-    pub text: Box<str>,
-    pub is_block: bool,
-    pub span: (u32, u32),
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrowFunctionExpression {
+    pub params: Vec<Pattern>,
+    pub body: ArrowFunctionBody,
+    pub expression: bool,
+    pub async_function: bool,
 }
 
-impl std::fmt::Debug for Comment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Comment")
-            .field("text", &self.text)
-            .field("is_block", &self.is_block)
-            .field("span", &self.span)
-            .finish()
-    }
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrowFunctionBody {
+    BlockStatement(BlockStatement),
+    Expression(Box<Expression>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDeclaration {
+    pub id: Option<Identifier>,
+    pub params: Vec<Pattern>,
+    pub body: BlockStatement,
+    pub generator: bool,
+    pub async_function: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassDeclaration {
+    pub id: Option<Identifier>,
+    pub super_class: Option<Box<Expression>>,
+    pub body: ClassBody,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassExpression {   
+    pub id: Option<Identifier>,
+    pub super_class: Option<Box<Expression>>,
+    pub body: ClassBody,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassBody {
+    pub body: Vec<ClassElement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassElement {
+    MethodDefinition(MethodDefinition),
+    StaticBlock(StaticBlock),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaticBlock {
+    pub body: BlockStatement,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodDefinition {
+    pub key: PropertyKey,
+    pub value: FunctionExpression,
+    pub kind: MethodKind,
+    pub computed: bool,
+    pub static_method: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MethodKind {
+    Constructor,
+    Method,
+    Get,
+    Set,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaggedTemplateExpression {
+    pub tag: Box<Expression>,
+    pub quasi: TemplateLiteral,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateLiteral {
+    pub quasis: Vec<TemplateElement>,
+    pub expressions: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateElement {
+    pub value: TemplateElementValue,
+    pub tail: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateElementValue {
+    pub raw: Box<str>,
+    pub cooked: Option<Box<str>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberExpression {
+    pub object: Box<Expression>,
+    pub property: MemberProperty,
+    pub computed: bool,
+    pub optional: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MemberProperty {
+    Identifier(Identifier),
+    Expression(Box<Expression>),
+    PrivateIdentifier(PrivateIdentifier), // TODO implement
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SuperExpression {
+    
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetaProperty {
+    pub meta: Identifier,
+    pub property: Identifier,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewExpression {
+    pub callee: Box<Expression>,
+    pub arguments: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallExpression {
+    pub callee: Box<Expression>,
+    pub arguments: Vec<Expression>,
+    pub optional: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateExpression {
+    pub operator: UpdateOperator,
+    pub argument: Box<Expression>,
+    pub prefix: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum UpdateOperator {
+    Increment,
+    Decrement,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AwaitExpression {
+    pub argument: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnaryExpression {
+    pub operator: UnaryOperator,
+    pub argument: Box<Expression>,
+    pub prefix: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOperator {
     Minus,
     Plus,
-    Increment,
-    Decrement,
     Not,
     BitwiseNot,
     Typeof,
@@ -453,29 +508,43 @@ pub enum UnaryOperator {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct BinaryExpression {
+    pub operator: BinaryOperator,
+    pub left: Box<Expression>,
+    pub right: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOperator {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Modulo,
-    Exponent,
     Equal,
-    StrictEqual,
     NotEqual,
+    StrictEqual,
     StrictNotEqual,
     LessThan,
-    LessThanEqual,
+    LessThanOrEqual,
     GreaterThan,
-    GreaterThanEqual,
-    BitwiseAnd,
-    BitwiseOr,
-    BitwiseXor,
+    GreaterThanOrEqual,
     LeftShift,
     RightShift,
     UnsignedRightShift,
+    Addition,
+    Subtraction,
+    Multiplication,
+    Division,
+    Remainder,
+    Exponentiation,
+    BitwiseOr,
+    BitwiseXor,
+    BitwiseAnd,
     In,
     InstanceOf,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LogicalExpression {
+    pub operator: LogicalOperator,
+    pub left: Box<Expression>,
+    pub right: Box<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -486,21 +555,154 @@ pub enum LogicalOperator {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ConditionalExpression {
+    pub test: Box<Expression>,
+    pub consequent: Box<Expression>,
+    pub alternate: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct YieldExpression {
+    
+    pub argument: Option<Box<Expression>>,
+    pub delegate: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssignmentExpression {
+    pub operator: AssignmentOperator,
+    pub left: AssignmentLeft,
+    pub right: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssignmentLeft {
+    Pattern(Pattern),
+    Expression(Box<Expression>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum AssignmentOperator {
     Assign,
-    AddAssign,
-    SubtractAssign,
+    PlusAssign,
+    MinusAssign,
     MultiplyAssign,
     DivideAssign,
-    ModuloAssign,
-    ExponentAssign,
-    BitwiseAndAssign,
-    BitwiseOrAssign,
-    BitwiseXorAssign,
+    RemainderAssign,
+    ExponentiationAssign,
     LeftShiftAssign,
     RightShiftAssign,
     UnsignedRightShiftAssign,
-    LogicalAndAssign,
+    BitwiseOrAssign,
+    BitwiseXorAssign,
+    BitwiseAndAssign,
     LogicalOrAssign,
-    NullishAssign,
+    LogicalAndAssign,
+    NullishCoalescingAssign,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SequenceExpression {
+    pub expressions: Vec<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectPattern {
+    pub properties: Vec<ObjectPatternProperty>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjectPatternProperty {
+    Property(ObjectProperty),
+    RestElement(RestElement),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectProperty {
+    pub key: PropertyKey,
+    pub value: Pattern,
+    pub computed: bool,
+    pub shorthand: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayPattern {
+    pub elements: Vec<Option<Pattern>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RestElement {
+    pub argument: Box<Pattern>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssignmentPattern {
+    pub left: Box<Pattern>,
+    pub right: Box<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportDeclaration {
+    pub specifiers: Vec<ImportSpecifier>,
+    pub source: StringLiteral,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportSpecifier {
+    ImportSpecifier(NamedImportSpecifier),
+    ImportDefaultSpecifier(ImportDefaultSpecifier),
+    ImportNamespaceSpecifier(ImportNamespaceSpecifier),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamedImportSpecifier {
+    pub imported: Identifier,
+    pub local: Identifier,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportDefaultSpecifier {
+    pub local: Identifier,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportNamespaceSpecifier {
+    pub local: Identifier,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportNamedDeclaration {
+    pub declaration: Option<Box<Declaration>>,
+    pub specifiers: Vec<ExportSpecifier>,
+    pub source: Option<StringLiteral>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportSpecifier {
+    pub exported: Identifier,
+    pub local: Identifier,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportDefaultDeclaration {
+    pub declaration: ExportDefaultDeclarationKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExportDefaultDeclarationKind {
+    Declaration(Box<Declaration>),
+    Expression(Box<Expression>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportAllDeclaration {
+    pub source: StringLiteral,
+    pub exported: Option<Identifier>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Comment {
+    pub text: String,
+    pub multiline: bool,
+    pub location: SourceLocation,
 }
