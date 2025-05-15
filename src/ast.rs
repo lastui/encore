@@ -112,6 +112,7 @@ pub struct PrivateIdentifier {
 pub enum Literal {
     StringLiteral(StringLiteral),
     BooleanLiteral(BooleanLiteral),
+    UndefinedLiteral(UndefinedLiteral),
     NullLiteral(NullLiteral),
     NumericLiteral(NumericLiteral),
     BigIntLiteral(BigIntLiteral),
@@ -130,6 +131,11 @@ pub struct BooleanLiteral {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NullLiteral {
+    
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UndefinedLiteral {
     
 }
 

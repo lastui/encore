@@ -1,22 +1,66 @@
 use crate::ast::*;
 use crate::lexer::*;
 use crate::parser::*;
+use crate::unparser::*;
 use super::expression::*;
 use super::declaration::*;
 use super::pattern::*;
 use super::class::*;
 use super::object::*;
 
-/// Parser for JavaScript statements
-pub struct StatementParser;
+pub struct StatementNode;
 
-impl StatementParser {
+impl StatementNode {
     pub fn new() -> Self {
         Self
     }
+
+    fn determine_for_loop_type(&self, parser: &mut Parser) -> ForLoopType {
+        let pos = parser.save_position();
+        
+        // Skip the variable declaration or pattern
+        if parser.check(&Token::Var) || parser.check(&Token::Let) || parser.check(&Token::Const) {
+            parser.advance();
+
+            while !parser.check(&Token::Semicolon) && 
+                  !parser.check(&Token::In) && 
+                  !parser.check(&Token::Of) && 
+                  !parser.check(&Token::RightParen) && 
+                  !parser.is_at_end() {
+                parser.advance();
+            }
+        } else {
+            while !parser.check(&Token::Semicolon) && 
+                  !parser.check(&Token::In) && 
+                  !parser.check(&Token::Of) && 
+                  !parser.check(&Token::RightParen) && 
+                  !parser.is_at_end() {
+                parser.advance();
+            }
+        }
+
+        let loop_type = match parser.peek() {
+            Token::In => ForLoopType::ForIn,
+            Token::Of => ForLoopType::ForOf,
+            _ => ForLoopType::Standard,
+        };
+        
+        // Restore position
+        parser.restore_position(pos);
+        
+        loop_type
+    }
+
 }
 
-impl ParserCombinator<Statement> for StatementParser {
+// Enum to represent the different types of for loops
+enum ForLoopType {
+    Standard,  // for (init; test; update)
+    ForIn,     // for (left in right)
+    ForOf,     // for (left of right)
+}
+
+impl ParserCombinator<Statement> for StatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<Statement> {
         match parser.peek() {
             // Special case for object literals at the start of a statement
@@ -25,7 +69,7 @@ impl ParserCombinator<Statement> for StatementParser {
                 let pos = parser.save_position();
                 
                 // Attempt to parse as an object literal
-                match ObjectExpressionParser::new().parse(parser) {
+                match ObjectExpressionNode::new().parse(parser) {
                     Ok(obj_expr) => {
 
                         // Successfully parsed as object expression
@@ -39,16 +83,50 @@ impl ParserCombinator<Statement> for StatementParser {
                     Err(_) => {
                         // Failed to parse as object expression, restore position and try as block statement
                         parser.restore_position(pos);
-                        return BlockStatementParser::new().parse(parser).map(Statement::BlockStatement);
+                        return BlockStatementNode::new().parse(parser).map(Statement::BlockStatement);
                     }
                 }
             },
             Token::Var |
             Token::Let |
             Token::Const => {
-                VariableDeclarationParser::new().parse(parser).map(|decl| 
+                VariableDeclarationNode::new().parse(parser).map(|decl| 
                     Statement::Declaration(Declaration::VariableDeclaration(decl))
                 )
+            },
+            Token::Async => {
+                // Check if this is an async function declaration
+                let pos = parser.save_position();
+                parser.advance(); // Skip 'async'
+                
+                if parser.check(&Token::Function) {
+                    // This is an async function declaration or expression
+                    parser.restore_position(pos);
+                    
+                    // Try to parse as function declaration first
+                    let pos2 = parser.save_position();
+                    parser.advance(); // Skip 'async'
+                    parser.advance(); // Skip 'function'
+                    
+                    // Check for generator function
+                    let _is_generator = parser.consume(&Token::Star);
+                    
+                    // If the next token is an identifier, this is a function declaration
+                    if let Token::Identifier(_) = parser.peek() {
+                        parser.restore_position(pos);
+                        FunctionDeclarationParser::new().parse(parser).map(|decl| 
+                            Statement::Declaration(Declaration::FunctionDeclaration(decl))
+                        )
+                    } else {
+                        // Otherwise, it's a function expression statement
+                        parser.restore_position(pos);
+                        ExpressionStatementNode::new().parse(parser).map(Statement::ExpressionStatement)
+                    }
+                } else {
+                    // Not a function, treat as regular expression statement
+                    parser.restore_position(pos);
+                    ExpressionStatementNode::new().parse(parser).map(Statement::ExpressionStatement)
+                }
             },
             Token::Function => {
                 // Check if this is a function declaration (has an identifier)
@@ -65,7 +143,7 @@ impl ParserCombinator<Statement> for StatementParser {
                 } else {
                     // Otherwise, it's a function expression statement
                     parser.restore_position(pos);
-                    ExpressionStatementParser::new().parse(parser).map(Statement::ExpressionStatement)
+                    ExpressionStatementNode::new().parse(parser).map(Statement::ExpressionStatement)
                 }
             },
             Token::Class => {
@@ -76,11 +154,11 @@ impl ParserCombinator<Statement> for StatementParser {
                 // If the next token is an identifier, this is a class declaration
                 if let Token::Identifier(_) = parser.peek() {
                     parser.restore_position(pos);
-                    ClassDeclarationParser::new().parse(parser).map(|decl| Statement::Declaration(Declaration::ClassDeclaration(decl)))
+                    ClassDeclarationNode::new().parse(parser).map(|decl| Statement::Declaration(Declaration::ClassDeclaration(decl)))
                 } else {
                     // Otherwise, it's a class expression statement
                     parser.restore_position(pos);
-                    ExpressionStatementParser::new().parse(parser).map(Statement::ExpressionStatement)
+                    ExpressionStatementNode::new().parse(parser).map(Statement::ExpressionStatement)
                 }
             },
             Token::Import => {
@@ -98,53 +176,64 @@ impl ParserCombinator<Statement> for StatementParser {
                 })
             },
             Token::If => {
-                IfStatementParser::new().parse(parser).map(Statement::IfStatement)
+                IfStatementNode::new().parse(parser).map(Statement::IfStatement)
             },
             Token::Switch => {
-                SwitchStatementParser::new().parse(parser).map(Statement::SwitchStatement)
+                SwitchStatementNode::new().parse(parser).map(Statement::SwitchStatement)
             },
             Token::For => {
-                // Try to parse as for statement
                 let pos = parser.save_position();
-                match ForStatementParser::new().parse(parser) {
-                    Ok(stmt) => Ok(Statement::ForStatement(stmt)),
-                    Err(_) => {
-                        // Try to parse as for-in statement
-                        parser.restore_position(pos);
-                        match ForInStatementParser::new().parse(parser) {
-                            Ok(stmt) => Ok(Statement::ForInStatement(stmt)),
-                            Err(_) => {
-                                // Try to parse as for-of statement
-                                parser.restore_position(pos);
-                                ForOfStatementParser::new().parse(parser).map(Statement::ForOfStatement)
-                            }
-                        }
-                    }
+                
+                // Consume the 'for' token
+                parser.advance();
+                
+                // Expect opening parenthesis
+                if !parser.consume(&Token::LeftParen) {
+                    parser.restore_position(pos);
+                    return Err(parser.error_at_current("Expected '(' after 'for'"));
+                }
+                
+                // Look ahead to determine the type of for loop
+                let loop_type = self.determine_for_loop_type(parser);
+                
+                // Restore position to start parsing the full statement
+                parser.restore_position(pos);
+                
+                match loop_type {
+                    ForLoopType::Standard => {
+                        ForStatementNode::new().parse(parser).map(Statement::ForStatement)
+                    },
+                    ForLoopType::ForIn => {
+                        ForInStatementNode::new().parse(parser).map(Statement::ForInStatement)
+                    },
+                    ForLoopType::ForOf => {
+                        ForOfStatementNode::new().parse(parser).map(Statement::ForOfStatement)
+                    },
                 }
             },
             Token::While => {
-                WhileStatementParser::new().parse(parser).map(Statement::WhileStatement)
+                WhileStatementNode::new().parse(parser).map(Statement::WhileStatement)
             },
             Token::Do => {
-                DoWhileStatementParser::new().parse(parser).map(Statement::DoWhileStatement)
+                DoWhileStatementNode::new().parse(parser).map(Statement::DoWhileStatement)
             },
             Token::Try => {
-                TryStatementParser::new().parse(parser).map(Statement::TryStatement)
+                TryStatementNode::new().parse(parser).map(Statement::TryStatement)
             },
             Token::With => {
-                WithStatementParser::new().parse(parser).map(Statement::WithStatement)
+                WithStatementNode::new().parse(parser).map(Statement::WithStatement)
             },
             Token::Throw => {
-                ThrowStatementParser::new().parse(parser).map(Statement::ThrowStatement)
+                ThrowStatementNode::new().parse(parser).map(Statement::ThrowStatement)
             },
             Token::Return => {
-                ReturnStatementParser::new().parse(parser).map(Statement::ReturnStatement)
+                ReturnStatementNode::new().parse(parser).map(Statement::ReturnStatement)
             },
             Token::Break => {
-                BreakStatementParser::new().parse(parser).map(Statement::BreakStatement)
+                BreakStatementNode::new().parse(parser).map(Statement::BreakStatement)
             },
             Token::Continue => {
-                ContinueStatementParser::new().parse(parser).map(Statement::ContinueStatement)
+                ContinueStatementNode::new().parse(parser).map(Statement::ContinueStatement)
             },
             Token::Debugger => {
                 parser.advance(); // Consume 'debugger'
@@ -158,7 +247,7 @@ impl ParserCombinator<Statement> for StatementParser {
             // Check for labeled statements (identifier followed by colon)
             Token::Identifier(_) => {
                 let pos = parser.save_position();
-                let ident = IdentifierParser::new().parse(parser)?;
+                let ident = IdentifierNode::new().parse(parser)?;
                 
                 if parser.consume(&Token::Colon) {
                     // This is a labeled statement
@@ -167,27 +256,27 @@ impl ParserCombinator<Statement> for StatementParser {
                 } else {
                     // Not a labeled statement, restore position and parse as expression statement
                     parser.restore_position(pos);
-                    ExpressionStatementParser::new().parse(parser).map(Statement::ExpressionStatement)
+                    ExpressionStatementNode::new().parse(parser).map(Statement::ExpressionStatement)
                 }
             },
             // Default to expression statement
             _ => {
-                ExpressionStatementParser::new().parse(parser).map(Statement::ExpressionStatement)
+                ExpressionStatementNode::new().parse(parser).map(Statement::ExpressionStatement)
             }
         }
     }
 }
 
 /// Parser for block statements
-pub struct BlockStatementParser;
+pub struct BlockStatementNode;
 
-impl BlockStatementParser {
+impl BlockStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<BlockStatement> for BlockStatementParser {
+impl ParserCombinator<BlockStatement> for BlockStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<BlockStatement> {
         parser.assert_consume(&Token::LeftBrace, "Expected '{' at the start of block statement")?;
         
@@ -195,7 +284,7 @@ impl ParserCombinator<BlockStatement> for BlockStatementParser {
         
         while !parser.check(&Token::RightBrace) && !parser.is_at_end() {
             // Parse a statement
-            let statement = StatementParser::new().parse(parser)?;
+            let statement = StatementNode::new().parse(parser)?;
             body.push(statement);
         }
         
@@ -205,21 +294,39 @@ impl ParserCombinator<BlockStatement> for BlockStatementParser {
     }
 }
 
-/// Parser for expression statements
-pub struct ExpressionStatementParser;
+impl UnparserCombinator<BlockStatement> for BlockStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &BlockStatement) {
+        unparser.write_char('{');
+        unparser.newline();
+        
+        if !node.body.is_empty() {
+            unparser.with_indent(|u| {
+                for stmt in &node.body {
+                    StatementNode::new().unparse(u, stmt);
+                    u.newline();
+                }
+            });
+        }
+        
+        unparser.write_char('}');
+    }
+}
 
-impl ExpressionStatementParser {
+/// Parser for expression statements
+pub struct ExpressionStatementNode;
+
+impl ExpressionStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<ExpressionStatement> for ExpressionStatementParser {
+impl ParserCombinator<ExpressionStatement> for ExpressionStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<ExpressionStatement> {
         // Check for directive prologue (string literals that might be "use strict")
         if let Token::StringLiteral(_) = parser.peek() {
             let pos = parser.save_position();
-            let expr = ExpressionParser::new().parse(parser)?;
+            let expr = ExpressionNode::new().parse(parser)?;
             
             // If this is followed by a semicolon or end of block, it's a directive
             if parser.check(&Token::Semicolon) || parser.check(&Token::RightBrace) || parser.is_at_end() {
@@ -249,7 +356,7 @@ impl ParserCombinator<ExpressionStatement> for ExpressionStatementParser {
             let pos = parser.save_position();
             
             // Try to parse as object expression
-            match ObjectExpressionParser::new().parse(parser) {
+            match ObjectExpressionNode::new().parse(parser) {
                 Ok(obj_expr) => {
                     // Successfully parsed as object expression
                     // Consume the semicolon if present
@@ -268,7 +375,7 @@ impl ParserCombinator<ExpressionStatement> for ExpressionStatementParser {
         }
         
         // Regular expression statement parsing
-        let expr = ExpressionParser::new().parse(parser)?;
+        let expr = ExpressionNode::new().parse(parser)?;
         
         // Consume the semicolon if present (ASI rules apply)
         // In JavaScript, semicolons are optional in many cases due to Automatic Semicolon Insertion (ASI)
@@ -291,27 +398,34 @@ impl ParserCombinator<ExpressionStatement> for ExpressionStatementParser {
 }
 
 /// Parser for if statements
-pub struct IfStatementParser;
+pub struct IfStatementNode;
 
-impl IfStatementParser {
+impl IfStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<IfStatement> for IfStatementParser {
+impl ParserCombinator<IfStatement> for IfStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<IfStatement> {
         parser.assert_consume(&Token::If, "Expected 'if'")?;
         parser.assert_consume(&Token::LeftParen, "Expected '(' after 'if'")?;
         
-        let test = Box::new(ExpressionParser::new().parse(parser)?);
+        let test = Box::new(ExpressionNode::new().parse(parser)?);
         
         parser.assert_consume(&Token::RightParen, "Expected ')' after if condition")?;
         
-        let consequent = Box::new(StatementParser::new().parse(parser)?);
+        // Check if the consequent starts with a left brace
+        let consequent = if parser.check(&Token::LeftBrace) {
+            // Force parsing as a block statement
+            Box::new(BlockStatementNode::new().parse(parser).map(Statement::BlockStatement)?)
+        } else {
+            // For other statement types, use the general statement parser
+            Box::new(StatementNode::new().parse(parser)?)
+        };
         
         let alternate = if parser.consume(&Token::Else) {
-            Some(Box::new(StatementParser::new().parse(parser)?))
+            Some(Box::new(StatementNode::new().parse(parser)?))
         } else {
             None
         };
@@ -324,21 +438,22 @@ impl ParserCombinator<IfStatement> for IfStatementParser {
     }
 }
 
-/// Parser for switch statements
-pub struct SwitchStatementParser;
 
-impl SwitchStatementParser {
+/// Parser for switch statements
+pub struct SwitchStatementNode;
+
+impl SwitchStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<SwitchStatement> for SwitchStatementParser {
+impl ParserCombinator<SwitchStatement> for SwitchStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<SwitchStatement> {
         parser.assert_consume(&Token::Switch, "Expected 'switch'")?;
         parser.assert_consume(&Token::LeftParen, "Expected '(' after 'switch'")?;
         
-        let discriminant = Box::new(ExpressionParser::new().parse(parser)?);
+        let discriminant = Box::new(ExpressionNode::new().parse(parser)?);
         
         parser.assert_consume(&Token::RightParen, "Expected ')' after switch expression")?;
         parser.assert_consume(&Token::LeftBrace, "Expected '{' to start switch body")?;
@@ -350,7 +465,7 @@ impl ParserCombinator<SwitchStatement> for SwitchStatementParser {
             while !p.check(&Token::RightBrace) && !p.is_at_end() {
                 if p.consume(&Token::Case) {
                     // Case clause
-                    let test = Some(Box::new(ExpressionParser::new().parse(p)?));
+                    let test = Some(Box::new(ExpressionNode::new().parse(p)?));
                     p.assert_consume(&Token::Colon, "Expected ':' after case value")?;
                     
                     let mut consequent = Vec::new();
@@ -358,7 +473,7 @@ impl ParserCombinator<SwitchStatement> for SwitchStatementParser {
                           !p.check(&Token::Default) && 
                           !p.check(&Token::RightBrace) && 
                           !p.is_at_end() {
-                        consequent.push(StatementParser::new().parse(p)?);
+                        consequent.push(StatementNode::new().parse(p)?);
                     }
                     
                     result.push(SwitchCase { test, consequent });
@@ -371,7 +486,7 @@ impl ParserCombinator<SwitchStatement> for SwitchStatementParser {
                           !p.check(&Token::Default) && 
                           !p.check(&Token::RightBrace) && 
                           !p.is_at_end() {
-                        consequent.push(StatementParser::new().parse(p)?);
+                        consequent.push(StatementNode::new().parse(p)?);
                     }
                     
                     result.push(SwitchCase { test: None, consequent });
@@ -394,25 +509,32 @@ impl ParserCombinator<SwitchStatement> for SwitchStatementParser {
 }
 
 /// Parser for while statements
-pub struct WhileStatementParser;
+pub struct WhileStatementNode;
 
-impl WhileStatementParser {
+impl WhileStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<WhileStatement> for WhileStatementParser {
+impl ParserCombinator<WhileStatement> for WhileStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<WhileStatement> {
         parser.assert_consume(&Token::While, "Expected 'while'")?;
         parser.assert_consume(&Token::LeftParen, "Expected '(' after 'while'")?;
         
-        let test = Box::new(ExpressionParser::new().parse(parser)?);
+        let test = Box::new(ExpressionNode::new().parse(parser)?);
         
         parser.assert_consume(&Token::RightParen, "Expected ')' after while condition")?;
             
         let body = parser.with_context(LexicalContext::LoopBody, |p| {
-            StatementParser::new().parse(p)
+            // Check if the body starts with a left brace
+            if p.check(&Token::LeftBrace) {
+                // Force parsing as a block statement
+                BlockStatementNode::new().parse(p).map(Statement::BlockStatement)
+            } else {
+                // For other statement types, use the general statement parser
+                StatementNode::new().parse(p)
+            }
         })?;
 
         Ok(WhileStatement {
@@ -423,26 +545,33 @@ impl ParserCombinator<WhileStatement> for WhileStatementParser {
 }
 
 /// Parser for do-while statements
-pub struct DoWhileStatementParser;
+pub struct DoWhileStatementNode;
 
-impl DoWhileStatementParser {
+impl DoWhileStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<DoWhileStatement> for DoWhileStatementParser {
+impl ParserCombinator<DoWhileStatement> for DoWhileStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<DoWhileStatement> {
         parser.assert_consume(&Token::Do, "Expected 'do'")?;
         
         let body = parser.with_context(LexicalContext::LoopBody, |p| {
-            StatementParser::new().parse(p)
+            // Check if the body starts with a left brace
+            if p.check(&Token::LeftBrace) {
+                // Force parsing as a block statement
+                BlockStatementNode::new().parse(p).map(Statement::BlockStatement)
+            } else {
+                // For other statement types, use the general statement parser
+                StatementNode::new().parse(p)
+            }
         })?;
 
         parser.assert_consume(&Token::While, "Expected 'while' after do block")?;
         parser.assert_consume(&Token::LeftParen, "Expected '(' after 'while'")?;
         
-        let test = Box::new(ExpressionParser::new().parse(parser)?);
+        let test = Box::new(ExpressionNode::new().parse(parser)?);
         
         parser.assert_consume(&Token::RightParen, "Expected ')' after while condition")?;
         parser.assert_consume(&Token::Semicolon, "Expected ';' after while condition")?;
@@ -455,15 +584,15 @@ impl ParserCombinator<DoWhileStatement> for DoWhileStatementParser {
 }
 
 /// Parser for for statements
-pub struct ForStatementParser;
+pub struct ForStatementNode;
 
-impl ForStatementParser {
+impl ForStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<ForStatement> for ForStatementParser {
+impl ParserCombinator<ForStatement> for ForStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<ForStatement> {
         parser.assert_consume(&Token::For, "Expected 'for'")?;
         parser.assert_consume(&Token::LeftParen, "Expected '(' after 'for'")?;
@@ -473,12 +602,24 @@ impl ParserCombinator<ForStatement> for ForStatementParser {
             None
         } else if parser.check(&Token::Var) || parser.check(&Token::Let) || parser.check(&Token::Const) {
             // Variable declaration
-            let decl = VariableDeclarationParser::new().parse(parser)?;
+            let decl = VariableDeclarationNode::new().parse(parser)?;
+            
+            // Check if this is a for-in or for-of loop
+            if parser.check(&Token::In) || parser.check(&Token::Of) {
+                return Err(parser.error_at_current("Expected ';' after for initialization"));
+            }
+            
             parser.assert_consume(&Token::Semicolon, "Expected ';' after for initialization")?;
             Some(ForInit::VariableDeclaration(decl))
         } else {
             // Expression
-            let expr = ExpressionParser::new().parse(parser)?;
+            let expr = ExpressionNode::new().parse(parser)?;
+            
+            // Check if this is a for-in or for-of loop
+            if parser.check(&Token::In) || parser.check(&Token::Of) {
+                return Err(parser.error_at_current("Expected ';' after for initialization"));
+            }
+            
             parser.assert_consume(&Token::Semicolon, "Expected ';' after for initialization")?;
             Some(ForInit::Expression(Box::new(expr)))
         };
@@ -487,7 +628,7 @@ impl ParserCombinator<ForStatement> for ForStatementParser {
         let test = if parser.consume(&Token::Semicolon) {
             None
         } else {
-            let expr = ExpressionParser::new().parse(parser)?;
+            let expr = ExpressionNode::new().parse(parser)?;
             parser.assert_consume(&Token::Semicolon, "Expected ';' after for condition")?;
             Some(Box::new(expr))
         };
@@ -496,13 +637,20 @@ impl ParserCombinator<ForStatement> for ForStatementParser {
         let update = if parser.consume(&Token::RightParen) {
             None
         } else {
-            let expr = ExpressionParser::new().parse(parser)?;
+            let expr = ExpressionNode::new().parse(parser)?;
             parser.assert_consume(&Token::RightParen, "Expected ')' after for clauses")?;
             Some(Box::new(expr))
         };
         
         let body = parser.with_context(LexicalContext::LoopBody, |p| {
-            StatementParser::new().parse(p)
+            // Check if the body starts with a left brace
+            if p.check(&Token::LeftBrace) {
+                // Force parsing as a block statement
+                BlockStatementNode::new().parse(p).map(Statement::BlockStatement)
+            } else {
+                // For other statement types, use the general statement parser
+                StatementNode::new().parse(p)
+            }
         })?;
         
         Ok(ForStatement {
@@ -514,16 +662,17 @@ impl ParserCombinator<ForStatement> for ForStatementParser {
     }
 }
 
-/// Parser for for-in statements
-pub struct ForInStatementParser;
 
-impl ForInStatementParser {
+/// Parser for for-in statements
+pub struct ForInStatementNode;
+
+impl ForInStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<ForInStatement> for ForInStatementParser {
+impl ParserCombinator<ForInStatement> for ForInStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<ForInStatement> {
         parser.assert_consume(&Token::For, "Expected 'for'")?;
         parser.assert_consume(&Token::LeftParen, "Expected '(' after 'for'")?;
@@ -531,24 +680,36 @@ impl ParserCombinator<ForInStatement> for ForInStatementParser {
         // Parse left side (variable declaration or pattern)
         let left = if parser.check(&Token::Var) || parser.check(&Token::Let) || parser.check(&Token::Const) {
             // Variable declaration
-            let decl = VariableDeclarationParser::new().parse(parser)?;
+            let decl = VariableDeclarationNode::new().parse(parser)?;
             ForInOf::VariableDeclaration(decl)
         } else {
             // Pattern
-            let pattern = PatternParser::new().parse(parser)?;
+            let pattern = PatternNode::new().parse(parser)?;
             ForInOf::Pattern(pattern)
         };
+        
+        // Check for 'in' keyword - fail early if not found
+        if !parser.check(&Token::In) {
+            return Err(parser.error_at_current("Expected 'in' in for-in statement"));
+        }
         
         // Expect 'in' keyword
         parser.assert_consume(&Token::In, "Expected 'in' in for-in statement")?;
         
         // Parse right side (expression)
-        let right = Box::new(ExpressionParser::new().parse(parser)?);
+        let right = Box::new(ExpressionNode::new().parse(parser)?);
         
         parser.assert_consume(&Token::RightParen, "Expected ')' after for-in clauses")?;
         
         let body = parser.with_context(LexicalContext::LoopBody, |p| {
-            StatementParser::new().parse(p)
+            // Check if the body starts with a left brace
+            if p.check(&Token::LeftBrace) {
+                // Force parsing as a block statement
+                BlockStatementNode::new().parse(p).map(Statement::BlockStatement)
+            } else {
+                // For other statement types, use the general statement parser
+                StatementNode::new().parse(p)
+            }
         })?;
         
         Ok(ForInStatement {
@@ -559,16 +720,78 @@ impl ParserCombinator<ForInStatement> for ForInStatementParser {
     }
 }
 
-/// Parser for for-of statements
-pub struct ForOfStatementParser;
+impl UnparserCombinator<ForInStatement> for ForInStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &ForInStatement) {
+        unparser.write_str("for");
+        unparser.space();
+        unparser.write_char('(');
+        
+        match &node.left {
+            ForInOf::VariableDeclaration(decl) => {
+                // Special handling for variable declarations in for-in loops
+                // Write the variable kind (var, let, const)
+                match decl.kind {
+                    VariableKind::Var => unparser.write_str("var"),
+                    VariableKind::Let => unparser.write_str("let"),
+                    VariableKind::Const => unparser.write_str("const"),
+                }
+                
+                unparser.write_char(' ');
+                
+                // Write the declarations without semicolon
+                if !decl.declarations.is_empty() {
+                    // First declaration
+                    VariableDeclaratorNode::new().unparse(unparser, &decl.declarations[0]);
+                    
+                    // Remaining declarations
+                    for d in &decl.declarations[1..] {
+                        unparser.write_char(',');
+                        unparser.space();
+                        VariableDeclaratorNode::new().unparse(unparser, d);
+                    }
+                }
+                // No semicolon here!
+            },
+            ForInOf::Pattern(pattern) => {
+                PatternNode::new().unparse(unparser, pattern);
+            }
+        }
+        
+        unparser.write_char(' ');
+        unparser.write_str("in");
+        unparser.write_char(' ');
+        
+        ExpressionNode::new().unparse(unparser, &node.right);
+        
+        unparser.write_char(')');
+        
+        match &*node.body {
+            Statement::BlockStatement(block) => {
+                unparser.space();
+                BlockStatementNode::new().unparse(unparser, block);
+            },
+            _ => {
+                unparser.newline();
+                unparser.with_indent(|u| {
+                    StatementNode::new().unparse(u, &node.body);
+                });
+            }
+        }
+    }
+}
 
-impl ForOfStatementParser {
+
+/// Parser for for-of statements
+pub struct ForOfStatementNode;
+
+impl ForOfStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<ForOfStatement> for ForOfStatementParser {
+/// Parser for for-of statements
+impl ParserCombinator<ForOfStatement> for ForOfStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<ForOfStatement> {
         parser.assert_consume(&Token::For, "Expected 'for'")?;
         
@@ -580,24 +803,37 @@ impl ParserCombinator<ForOfStatement> for ForOfStatementParser {
         // Parse left side (variable declaration or pattern)
         let left = if parser.check(&Token::Var) || parser.check(&Token::Let) || parser.check(&Token::Const) {
             // Variable declaration
-            let decl = VariableDeclarationParser::new().parse(parser)?;
+            let decl = VariableDeclarationNode::new().parse(parser)?;
             ForInOf::VariableDeclaration(decl)
         } else {
             // Pattern
-            let pattern = PatternParser::new().parse(parser)?;
+            let pattern = PatternNode::new().parse(parser)?;
             ForInOf::Pattern(pattern)
         };
+        
+        // Check for 'of' keyword - fail early if not found
+        if !parser.check(&Token::Of) {
+            return Err(parser.error_at_current("Expected 'of' in for-of statement"));
+        }
         
         // Expect 'of' keyword
         parser.assert_consume(&Token::Of, "Expected 'of' in for-of statement")?;
         
         // Parse right side (expression)
-        let right = Box::new(ExpressionParser::new().parse(parser)?);
+        let right = Box::new(ExpressionNode::new().parse(parser)?);
         
         parser.assert_consume(&Token::RightParen, "Expected ')' after for-of clauses")?;
 
+        // Parse the body with special handling for block statements
         let body = parser.with_context(LexicalContext::LoopBody, |p| {
-            StatementParser::new().parse(p)
+            // Check if the body starts with a left brace
+            if p.check(&Token::LeftBrace) {
+                // Force parsing as a block statement
+                BlockStatementNode::new().parse(p).map(Statement::BlockStatement)
+            } else {
+                // For other statement types, use the general statement parser
+                StatementNode::new().parse(p)
+            }
         })?;
         
         Ok(ForOfStatement {
@@ -609,16 +845,84 @@ impl ParserCombinator<ForOfStatement> for ForOfStatementParser {
     }
 }
 
-/// Parser for break statements
-pub struct BreakStatementParser;
 
-impl BreakStatementParser {
+impl UnparserCombinator<ForOfStatement> for ForOfStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &ForOfStatement) {
+        unparser.write_str("for");
+        
+        if node.await_token {
+            unparser.write_char(' ');
+            unparser.write_str("await");
+        }
+        
+        unparser.space();
+        unparser.write_char('(');
+        
+        match &node.left {
+            ForInOf::VariableDeclaration(decl) => {
+                // Special handling for variable declarations in for-of loops
+                // Write the variable kind (var, let, const)
+                match decl.kind {
+                    VariableKind::Var => unparser.write_str("var"),
+                    VariableKind::Let => unparser.write_str("let"),
+                    VariableKind::Const => unparser.write_str("const"),
+                }
+                
+                unparser.write_char(' ');
+                
+                // Write the declarations without semicolon
+                if !decl.declarations.is_empty() {
+                    // First declaration
+                    VariableDeclaratorNode::new().unparse(unparser, &decl.declarations[0]);
+                    
+                    // Remaining declarations
+                    for d in &decl.declarations[1..] {
+                        unparser.write_char(',');
+                        unparser.space();
+                        VariableDeclaratorNode::new().unparse(unparser, d);
+                    }
+                }
+                // No semicolon here!
+            },
+            ForInOf::Pattern(pattern) => {
+                PatternNode::new().unparse(unparser, pattern);
+            }
+        }
+        
+        unparser.write_char(' ');
+        unparser.write_str("of");
+        unparser.write_char(' ');
+        
+        ExpressionNode::new().unparse(unparser, &node.right);
+        
+        unparser.write_char(')');
+        
+        match &*node.body {
+            Statement::BlockStatement(block) => {
+                unparser.space();
+                BlockStatementNode::new().unparse(unparser, block);
+            },
+            _ => {
+                unparser.newline();
+                unparser.with_indent(|u| {
+                    StatementNode::new().unparse(u, &node.body);
+                });
+            }
+        }
+    }
+}
+
+
+/// Parser for break statements
+pub struct BreakStatementNode;
+
+impl BreakStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<BreakStatement> for BreakStatementParser {
+impl ParserCombinator<BreakStatement> for BreakStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<BreakStatement> {
         parser.assert_consume(&Token::Break, "Expected 'break'")?;
         
@@ -629,7 +933,7 @@ impl ParserCombinator<BreakStatement> for BreakStatementParser {
         
         // Check for label
         let label = if !parser.previous_line_terminator() && matches!(parser.peek(), Token::Identifier(_)) {
-            Some(IdentifierParser::new().parse(parser)?)
+            Some(IdentifierNode::new().parse(parser)?)
         } else {
             None
         };
@@ -642,15 +946,15 @@ impl ParserCombinator<BreakStatement> for BreakStatementParser {
 }
 
 /// Parser for continue statements
-pub struct ContinueStatementParser;
+pub struct ContinueStatementNode;
 
-impl ContinueStatementParser {
+impl ContinueStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<ContinueStatement> for ContinueStatementParser {
+impl ParserCombinator<ContinueStatement> for ContinueStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<ContinueStatement> {
         parser.assert_consume(&Token::Continue, "Expected 'continue'")?;
         
@@ -661,7 +965,7 @@ impl ParserCombinator<ContinueStatement> for ContinueStatementParser {
         
         // Check for label
         let label = if !parser.previous_line_terminator() && matches!(parser.peek(), Token::Identifier(_)) {
-            Some(IdentifierParser::new().parse(parser)?)
+            Some(IdentifierNode::new().parse(parser)?)
         } else {
             None
         };
@@ -673,16 +977,29 @@ impl ParserCombinator<ContinueStatement> for ContinueStatementParser {
     }
 }
 
-/// Parser for return statements
-pub struct ReturnStatementParser;
+impl UnparserCombinator<ContinueStatement> for ContinueStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &ContinueStatement) {
+        unparser.write_str("continue");
+        
+        if let Some(label) = &node.label {
+            unparser.space();
+            unparser.write_str(&label.name);
+        }
+        
+        unparser.write_char(';');
+    }
+}
 
-impl ReturnStatementParser {
+/// Parser for return statements
+pub struct ReturnStatementNode;
+
+impl ReturnStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<ReturnStatement> for ReturnStatementParser {
+impl ParserCombinator<ReturnStatement> for ReturnStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<ReturnStatement> {
         parser.assert_consume(&Token::Return, "Expected 'return'")?;
         
@@ -698,7 +1015,7 @@ impl ParserCombinator<ReturnStatement> for ReturnStatementParser {
                          parser.is_at_end() {
             None
         } else {
-            Some(Box::new(ExpressionParser::new().parse(parser)?))
+            Some(Box::new(ExpressionNode::new().parse(parser)?))
         };
         
         // Consume semicolon if present
@@ -708,25 +1025,38 @@ impl ParserCombinator<ReturnStatement> for ReturnStatementParser {
     }
 }
 
-/// Parser for with statements
-pub struct WithStatementParser;
+impl UnparserCombinator<ReturnStatement> for ReturnStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &ReturnStatement) {
+        unparser.write_str("return");
+        
+        if let Some(argument) = &node.argument {
+            unparser.write_char(' ');
+            ExpressionNode::new().unparse(unparser, argument);
+        }
+        
+        unparser.write_char(';');
+    }
+}
 
-impl WithStatementParser {
+/// Parser for with statements
+pub struct WithStatementNode;
+
+impl WithStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<WithStatement> for WithStatementParser {
+impl ParserCombinator<WithStatement> for WithStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<WithStatement> {
         parser.assert_consume(&Token::With, "Expected 'with'")?;
         parser.assert_consume(&Token::LeftParen, "Expected '(' after 'with'")?;
         
-        let object = Box::new(ExpressionParser::new().parse(parser)?);
+        let object = Box::new(ExpressionNode::new().parse(parser)?);
         
         parser.assert_consume(&Token::RightParen, "Expected ')' after with object")?;
         
-        let body = Box::new(StatementParser::new().parse(parser)?);
+        let body = Box::new(StatementNode::new().parse(parser)?);
         
         Ok(WithStatement {
             object,
@@ -735,58 +1065,103 @@ impl ParserCombinator<WithStatement> for WithStatementParser {
     }
 }
 
-/// Parser for throw statements
-pub struct ThrowStatementParser;
+impl UnparserCombinator<WithStatement> for WithStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &WithStatement) {
+        unparser.write_str("with");
+        unparser.write_char(' ');
+        unparser.write_char('(');
+        ExpressionNode::new().unparse(unparser, &node.object);
+        unparser.write_char(')');
+        
+        match &*node.body {
+            Statement::BlockStatement(block) => {
+                unparser.space();
+                BlockStatementNode::new().unparse(unparser, block);
+            },
+            _ => {
+                unparser.newline();
+                unparser.with_indent(|u| {
+                    StatementNode::new().unparse(u, &node.body);
+                });
+            }
+        }
+    }
+}
 
-impl ThrowStatementParser {
+/// Parser for throw statements
+pub struct ThrowStatementNode;
+
+impl ThrowStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<ThrowStatement> for ThrowStatementParser {
+impl ParserCombinator<ThrowStatement> for ThrowStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<ThrowStatement> {
         parser.assert_consume(&Token::Throw, "Expected 'throw'")?;
         
-        // Line terminator not allowed between throw and expression
         if parser.previous_line_terminator() {
             return Err(parser.error_at_current("Line terminator not allowed after 'throw'"));
         }
         
-        let argument = Box::new(ExpressionParser::new().parse(parser)?);
-        
-        // Consume semicolon if present
+        let argument = Box::new(ExpressionNode::new().parse(parser)?);
+    
         parser.consume(&Token::Semicolon);
         
         Ok(ThrowStatement { argument })
     }
 }
 
-/// Parser for try statements
-pub struct TryStatementParser;
+impl UnparserCombinator<ThrowStatement> for ThrowStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &ThrowStatement) {
+        unparser.write_str("throw");
+        unparser.write_char(' ');
+        ExpressionNode::new().unparse(unparser, &node.argument);
+        unparser.write_char(';');
+    }
+}
 
-impl TryStatementParser {
+/// Parser for try statements
+pub struct TryStatementNode;
+
+impl TryStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<TryStatement> for TryStatementParser {
+impl ParserCombinator<TryStatement> for TryStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<TryStatement> {
         parser.assert_consume(&Token::Try, "Expected 'try'")?;
         
-        let block = BlockStatementParser::new().parse(parser)?;
+        let block = BlockStatementNode::new().parse(parser)?;
         
         // Parse catch clause if present
         let handler = if parser.consume(&Token::Catch) {
-            Some(self.parse_catch_clause(parser)?)
+            // Parse parameter if present
+            let param = if parser.consume(&Token::LeftParen) {
+                let pattern = PatternNode::new().parse(parser)?;
+                parser.assert_consume(&Token::RightParen, "Expected ')' after catch parameter")?;
+                Some(pattern)
+            } else {
+                None
+            };
+            
+            let body = BlockStatementNode::new().parse(parser)?;
+            
+            Some(CatchClause {
+                param,
+                body,
+            })
+
         } else {
             None
         };
         
         // Parse finally clause if present
         let finalizer = if parser.consume(&Token::Finally) {
-            Some(BlockStatementParser::new().parse(parser)?)
+            Some(BlockStatementNode::new().parse(parser)?)
         } else {
             None
         };
@@ -804,47 +1179,58 @@ impl ParserCombinator<TryStatement> for TryStatementParser {
     }
 }
 
-impl TryStatementParser {
-    fn parse_catch_clause(&self, parser: &mut Parser) -> ParseResult<CatchClause> {
-        // The 'catch' keyword has already been consumed
+impl UnparserCombinator<TryStatement> for TryStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &TryStatement) {
+        unparser.write_str("try");
+        unparser.space();
+        BlockStatementNode::new().unparse(unparser, &node.block);
         
-        // Parse parameter if present
-        let param = if parser.consume(&Token::LeftParen) {
-            let pattern = PatternParser::new().parse(parser)?;
-            parser.assert_consume(&Token::RightParen, "Expected ')' after catch parameter")?;
-            Some(pattern)
-        } else {
-            None
-        };
+        // Handle catch clause if present
+        if let Some(handler) = &node.handler {
+            unparser.space();
+            unparser.write_str("catch");
+            
+            // Handle catch parameter if present
+            if let Some(param) = &handler.param {
+                unparser.space();
+                unparser.write_char('(');
+                PatternNode::new().unparse(unparser, param);
+                unparser.write_char(')');
+            }
+            
+            unparser.space();
+            BlockStatementNode::new().unparse(unparser, &handler.body);
+        }
         
-        let body = BlockStatementParser::new().parse(parser)?;
-        
-        Ok(CatchClause {
-            param,
-            body,
-        })
+        // Handle finally clause if present
+        if let Some(finalizer) = &node.finalizer {
+            unparser.space();
+            unparser.write_str("finally");
+            unparser.space();
+            BlockStatementNode::new().unparse(unparser, finalizer);
+        }
     }
 }
 
 /// Parser for labeled statements
-pub struct LabeledStatementParser;
+pub struct LabeledStatementNode;
 
-impl LabeledStatementParser {
+impl LabeledStatementNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<LabeledStatement> for LabeledStatementParser {
+impl ParserCombinator<LabeledStatement> for LabeledStatementNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<LabeledStatement> {
-        let label = IdentifierParser::new().parse(parser)?;
+        let label = IdentifierNode::new().parse(parser)?;
         
         parser.assert_consume(&Token::Colon, "Expected ':' after label")?;
         
         // Add label to context
         //parser.add_label(label.name.clone());
         
-        let body = Box::new(StatementParser::new().parse(parser)?);
+        let body = Box::new(StatementNode::new().parse(parser)?);
         
         // Remove label from context
         //parser.remove_label(&label.name);
@@ -853,5 +1239,272 @@ impl ParserCombinator<LabeledStatement> for LabeledStatementParser {
             label,
             body,
         })
+    }
+}
+
+impl UnparserCombinator<LabeledStatement> for LabeledStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &LabeledStatement) {
+        unparser.write_str(&node.label.name);
+        unparser.write_char(':');
+        unparser.space();
+        StatementNode::new().unparse(unparser, &node.body);
+    }
+}
+
+// Main statement unparser
+impl UnparserCombinator<Statement> for StatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &Statement) {
+        match node {
+            Statement::BlockStatement(stmt) => BlockStatementNode::new().unparse(unparser, stmt),
+            Statement::BreakStatement(stmt) => BreakStatementNode::new().unparse(unparser, stmt),
+            Statement::ContinueStatement(stmt) => ContinueStatementNode::new().unparse(unparser, stmt),
+            Statement::DebuggerStatement => {
+                // TODO its own unparser
+                unparser.write_str("debugger");
+                unparser.write_char(';');
+            },
+            Statement::DoWhileStatement(stmt) => DoWhileStatementNode::new().unparse(unparser, stmt),
+            //Statement::EmptyStatement => unparser.write_char(';'),
+            Statement::EmptyStatement => {},
+            Statement::ExpressionStatement(stmt) => ExpressionStatementNode::new().unparse(unparser, stmt),
+            Statement::ForStatement(stmt) => ForStatementNode::new().unparse(unparser, stmt),
+            Statement::ForInStatement(stmt) => ForInStatementNode::new().unparse(unparser, stmt),
+            Statement::ForOfStatement(stmt) => ForOfStatementNode::new().unparse(unparser, stmt),
+            Statement::IfStatement(stmt) => IfStatementNode::new().unparse(unparser, stmt),
+            Statement::LabeledStatement(stmt) => LabeledStatementNode::new().unparse(unparser, stmt),
+            Statement::ReturnStatement(stmt) => ReturnStatementNode::new().unparse(unparser, stmt),
+            Statement::SwitchStatement(stmt) => SwitchStatementNode::new().unparse(unparser, stmt),
+            Statement::ThrowStatement(stmt) => ThrowStatementNode::new().unparse(unparser, stmt),
+            Statement::TryStatement(stmt) => TryStatementNode::new().unparse(unparser, stmt),
+            Statement::WhileStatement(stmt) => WhileStatementNode::new().unparse(unparser, stmt),
+            Statement::WithStatement(stmt) => WithStatementNode::new().unparse(unparser, stmt),
+            Statement::Declaration(decl) => {
+                match decl {
+                    Declaration::ClassDeclaration(decl) => ClassDeclarationNode::new().unparse(unparser, decl),
+                    Declaration::FunctionDeclaration(decl) => FunctionDeclarationParser::new().unparse(unparser, decl),
+                    Declaration::VariableDeclaration(decl) => VariableDeclarationNode::new().unparse(unparser, decl),
+                    Declaration::ImportDeclaration(decl) => ImportDeclarationParser::new().unparse(unparser, decl),
+                    Declaration::ExportNamedDeclaration(decl) => ExportNamedDeclarationParser::new().unparse(unparser, decl),
+                    Declaration::ExportDefaultDeclaration(decl) => ExportDefaultDeclarationParser::new().unparse(unparser, decl),
+                    Declaration::ExportAllDeclaration(decl) => ExportAllDeclarationParser::new().unparse(unparser, decl),
+                }
+            }
+        }
+    }
+}
+
+// Expression statement unparser
+impl UnparserCombinator<ExpressionStatement> for ExpressionStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &ExpressionStatement) {
+        ExpressionNode::new().unparse(unparser, &node.expression);
+        unparser.write_char(';');
+    }
+}
+
+// If statement unparser
+impl UnparserCombinator<IfStatement> for IfStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &IfStatement) {
+        unparser.write_str("if");
+        unparser.space();
+        unparser.write_char('(');
+        ExpressionNode::new().unparse(unparser, &node.test);
+        unparser.write_char(')');
+        
+        // Handle consequent
+        match &*node.consequent {
+            Statement::BlockStatement(block) => {
+                unparser.space();
+                BlockStatementNode::new().unparse(unparser, block);
+            },
+            _ => {
+                unparser.newline();
+                unparser.with_indent(|u| {
+                    StatementNode::new().unparse(u, &node.consequent);
+                });
+            }
+        }
+        
+        // Handle alternate (else branch)
+        if let Some(alt) = &node.alternate {
+            unparser.space();
+            unparser.write_str("else");
+            
+            match &**alt {
+                Statement::IfStatement(_) => {
+                    // For else if, keep on same line
+                    unparser.space();
+                    StatementNode::new().unparse(unparser, alt);
+                },
+                Statement::BlockStatement(block) => {
+                    unparser.space();
+                    BlockStatementNode::new().unparse(unparser, block);
+                },
+                _ => {
+                    unparser.newline();
+                    unparser.with_indent(|u| {
+                        StatementNode::new().unparse(u, alt);
+                    });
+                }
+            }
+        }
+    }
+}
+
+// Switch statement unparser
+impl UnparserCombinator<SwitchStatement> for SwitchStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &SwitchStatement) {
+        unparser.write_str("switch");
+        unparser.space();
+        unparser.write_char('(');
+        ExpressionNode::new().unparse(unparser, &node.discriminant);
+        unparser.write_char(')');
+        unparser.space();
+        unparser.write_char('{');
+        unparser.newline();
+        
+        for case in &node.cases {
+            if let Some(test) = &case.test {
+                unparser.write_str("case");
+                unparser.write_char(' ');
+                ExpressionNode::new().unparse(unparser, test);
+                unparser.write_char(':');
+            } else {
+                unparser.write_str("default:");
+            }
+            
+            if !case.consequent.is_empty() {
+                unparser.newline();
+                
+                unparser.with_indent(|u| {
+                    for stmt in &case.consequent {
+                        StatementNode::new().unparse(u, stmt);
+                        u.newline();
+                    }
+                });
+            } else {
+                unparser.newline();
+            }
+        }
+        
+        unparser.write_char('}');
+    }
+}
+
+// While statement unparser
+impl UnparserCombinator<WhileStatement> for WhileStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &WhileStatement) {
+        unparser.write_str("while");
+        unparser.space();
+        unparser.write_char('(');
+        ExpressionNode::new().unparse(unparser, &node.test);
+        unparser.write_char(')');
+        unparser.space();
+        
+        match &*node.body {
+            Statement::BlockStatement(block) => {
+                BlockStatementNode::new().unparse(unparser, block);
+            },
+            _ => {
+                unparser.newline();
+                unparser.with_indent(|u| {
+                    StatementNode::new().unparse(u, &node.body);
+                });
+            }
+        }
+    }
+}
+
+// Do-while statement unparser
+impl UnparserCombinator<DoWhileStatement> for DoWhileStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &DoWhileStatement) {
+        unparser.write_str("do");
+        unparser.space();
+        
+        match &*node.body {
+            Statement::BlockStatement(block) => {
+                BlockStatementNode::new().unparse(unparser, block);
+            },
+            _ => {
+                unparser.newline();
+                unparser.with_indent(|u| {
+                    StatementNode::new().unparse(u, &node.body);
+                });
+                unparser.newline();
+            }
+        }
+        
+        unparser.space();
+        unparser.write_str("while");
+        unparser.space();
+        unparser.write_char('(');
+        ExpressionNode::new().unparse(unparser, &node.test);
+        unparser.write_str(");");
+    }
+}
+
+// For statement unparser
+impl UnparserCombinator<ForStatement> for ForStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &ForStatement) {
+        unparser.write_str("for");
+        unparser.space();
+        unparser.write_char('(');
+        
+        // Initialization
+        if let Some(init) = &node.init {
+            match init {
+                ForInit::VariableDeclaration(decl) => {
+                    VariableDeclarationNode::new().unparse(unparser, decl);
+                },
+                ForInit::Expression(expr) => {
+                    ExpressionNode::new().unparse(unparser, expr);
+                    unparser.write_char(';');
+                }
+            }
+        } else {
+            unparser.write_char(';');
+        }
+        
+        // Test condition
+        unparser.space();
+        if let Some(test) = &node.test {
+            ExpressionNode::new().unparse(unparser, test);
+        }
+        unparser.write_char(';');
+        
+        // Update expression
+        unparser.space();
+        if let Some(update) = &node.update {
+            ExpressionNode::new().unparse(unparser, update);
+        }
+        
+        unparser.write_char(')');
+        unparser.space();
+        
+        match &*node.body {
+            Statement::BlockStatement(block) => {
+                BlockStatementNode::new().unparse(unparser, block);
+            },
+            _ => {
+                unparser.newline();
+                unparser.with_indent(|u| {
+                    StatementNode::new().unparse(u, &node.body);
+                });
+            }
+        }
+    }
+}
+
+
+// Break statement unparser
+impl UnparserCombinator<BreakStatement> for BreakStatementNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &BreakStatement) {
+        unparser.write_str("break");
+        
+        if let Some(label) = &node.label {
+            unparser.space();
+            unparser.write_str(&label.name);
+        }
+        
+        unparser.write_char(';');
     }
 }

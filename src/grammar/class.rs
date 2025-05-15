@@ -1,37 +1,38 @@
 use crate::ast::*;
 use crate::lexer::*;
 use crate::parser::*;
+use crate::unparser::*;
 use super::expression::*;
 use super::pattern::*;
 use super::statement::*;
 use super::function::*;
 use super::literal::*;
 
-pub struct ClassDeclarationParser;
+pub struct ClassDeclarationNode;
 
-impl ClassDeclarationParser {
+impl ClassDeclarationNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<ClassDeclaration> for ClassDeclarationParser {
+impl ParserCombinator<ClassDeclaration> for ClassDeclarationNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<ClassDeclaration> {
         parser.assert_consume(&Token::Class, "Expected 'class'")?;
 
         let id = if matches!(parser.peek(), Token::Identifier(_)) {
-            Some(IdentifierParser::new().parse(parser)?)
+            Some(IdentifierNode::new().parse(parser)?)
         } else {
             None
         };
 
         let super_class = if parser.consume(&Token::Extends) {
-            Some(Box::new(ExpressionParser::new().parse(parser)?))
+            Some(Box::new(ExpressionNode::new().parse(parser)?))
         } else {
             None
         };
         
-        let body = ClassBodyParser::new().parse(parser)?;
+        let body = ClassBodyNode::new().parse(parser)?;
 
         Ok(ClassDeclaration {
             id,
@@ -41,31 +42,56 @@ impl ParserCombinator<ClassDeclaration> for ClassDeclarationParser {
     }
 }
 
-pub struct ClassExpressionParser;
+impl UnparserCombinator<ClassDeclaration> for ClassDeclarationNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &ClassDeclaration) {
+        unparser.write_str("class");
+        
+        // Write the class name if present
+        if let Some(id) = &node.id {
+            unparser.space();
+            unparser.write_str(&id.name);
+        }
+        
+        // Write the extends clause if present
+        if let Some(super_class) = &node.super_class {
+            unparser.space();
+            unparser.write_str("extends");
+            unparser.space();
+            ExpressionNode::new().unparse(unparser, super_class);
+        }
+        
+        unparser.space();
+        
+        // Write the class body
+        ClassBodyNode::new().unparse(unparser, &node.body);
+    }
+}
 
-impl ClassExpressionParser {
+pub struct ClassExpressionNode;
+
+impl ClassExpressionNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<ClassExpression> for ClassExpressionParser {
+impl ParserCombinator<ClassExpression> for ClassExpressionNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<ClassExpression> {
         parser.assert_consume(&Token::Class, "Expected 'class'")?;
 
         let id = if matches!(parser.peek(), Token::Identifier(_)) {
-            Some(IdentifierParser::new().parse(parser)?)
+            Some(IdentifierNode::new().parse(parser)?)
         } else {
             None
         };
         
         let super_class = if parser.consume(&Token::Extends) {
-            Some(Box::new(ExpressionParser::new().parse(parser)?))
+            Some(Box::new(ExpressionNode::new().parse(parser)?))
         } else {
             None
         };
 
-        let body = ClassBodyParser::new().parse(parser)?;
+        let body = ClassBodyNode::new().parse(parser)?;
         
         Ok(ClassExpression {
             id,
@@ -75,15 +101,40 @@ impl ParserCombinator<ClassExpression> for ClassExpressionParser {
     }
 }
 
-pub struct SuperExpressionParser;
+impl UnparserCombinator<ClassExpression> for ClassExpressionNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &ClassExpression) {
+        unparser.write_str("class");
+        
+        // Write the class name if present
+        if let Some(id) = &node.id {
+            unparser.space();
+            unparser.write_str(&id.name);
+        }
+        
+        // Write the extends clause if present
+        if let Some(super_class) = &node.super_class {
+            unparser.space();
+            unparser.write_str("extends");
+            unparser.space();
+            ExpressionNode::new().unparse(unparser, super_class);
+        }
+        
+        unparser.space();
+        
+        // Write the class body
+        ClassBodyNode::new().unparse(unparser, &node.body);
+    }
+}
 
-impl SuperExpressionParser {
+pub struct SuperExpressionNode;
+
+impl SuperExpressionNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<SuperExpression> for SuperExpressionParser {
+impl ParserCombinator<SuperExpression> for SuperExpressionNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<SuperExpression> {
         parser.assert_consume(&Token::Super, "Expected 'super'")?;
 
@@ -91,15 +142,21 @@ impl ParserCombinator<SuperExpression> for SuperExpressionParser {
     }
 }
 
-pub struct ClassBodyParser;
+impl UnparserCombinator<SuperExpression> for SuperExpressionNode {
+    fn unparse(&self, unparser: &mut Unparser, _node: &SuperExpression) {
+        unparser.write_str("super");
+    }
+}
 
-impl ClassBodyParser {
+pub struct ClassBodyNode;
+
+impl ClassBodyNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<ClassBody> for ClassBodyParser {
+impl ParserCombinator<ClassBody> for ClassBodyNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<ClassBody> {
         parser.assert_consume(&Token::LeftBrace, "Expected '{' after class declaration")?;
         
@@ -108,13 +165,13 @@ impl ParserCombinator<ClassBody> for ClassBodyParser {
         while !parser.check(&Token::RightBrace) && !parser.is_at_end() {
             // Check for static block
             if parser.consume(&Token::Static) && parser.check(&Token::LeftBrace) {
-                let static_block = StaticBlockParser::new().parse(parser)?;
+                let static_block = StaticBlockNode::new().parse(parser)?;
                 body.push(ClassElement::StaticBlock(static_block));
                 continue;
             }
             
             // Parse method definition
-            let method = MethodDefinitionParser::new().parse(parser)?;
+            let method = MethodDefinitionNode::new().parse(parser)?;
             body.push(ClassElement::MethodDefinition(method));
         }
         
@@ -124,15 +181,43 @@ impl ParserCombinator<ClassBody> for ClassBodyParser {
     }
 }
 
-pub struct MethodDefinitionParser;
+impl UnparserCombinator<ClassBody> for ClassBodyNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &ClassBody) {
+        unparser.write_char('{');
+        
+        if !node.body.is_empty() {
+            unparser.newline();
+            
+            unparser.with_indent(|u| {
+                for element in &node.body {
+                    match element {
+                        ClassElement::MethodDefinition(method) => {
+                            MethodDefinitionNode::new().unparse(u, method);
+                        },
+                        ClassElement::StaticBlock(static_block) => {
+                            u.write_str("static");
+                            u.space();
+                            StaticBlockNode::new().unparse(u, static_block);
+                        }
+                    }
+                    u.newline();
+                }
+            });
+        }
+        
+        unparser.write_char('}');
+    }
+}
 
-impl MethodDefinitionParser {
+pub struct MethodDefinitionNode;
+
+impl MethodDefinitionNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<MethodDefinition> for MethodDefinitionParser {
+impl ParserCombinator<MethodDefinition> for MethodDefinitionNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<MethodDefinition> {
         // Check for static modifier
         let static_method = parser.consume(&Token::Static);
@@ -156,12 +241,13 @@ impl ParserCombinator<MethodDefinition> for MethodDefinitionParser {
         // Parse the key
         let (key, computed) = if parser.consume(&Token::LeftBracket) {
             // Computed property name
-            let expr = ExpressionParser::new().parse(parser)?;
+            let expr = ExpressionNode::new().parse(parser)?;
             parser.assert_consume(&Token::RightBracket, "Expected ']' after computed property name")?;
             (PropertyKey::Expression(Box::new(expr)), true)
         } else if parser.check(&Token::Hash) {
             // Private field or method
             parser.advance(); // Consume the '#'
+            // TODO what about string literal?
             if let Token::Identifier(name) = parser.peek() {
                 // Clone the name before advancing the parser
                 let name_clone = name.clone();
@@ -178,11 +264,11 @@ impl ParserCombinator<MethodDefinition> for MethodDefinitionParser {
             match parser.peek() {
                 Token::StringLiteral(_) |
                 Token::NumberLiteral(_) => {
-                    let literal = LiteralParser::new().parse(parser)?;
+                    let literal = LiteralNode::new().parse(parser)?;
                     (PropertyKey::Literal(literal), false)
                 },
                 _ => {
-                    let ident = IdentifierParser::new().parse(parser)?;
+                    let ident = IdentifierNode::new().parse(parser)?;
                     (PropertyKey::Identifier(ident), false)
                 }
             }
@@ -192,7 +278,7 @@ impl ParserCombinator<MethodDefinition> for MethodDefinitionParser {
         parser.assert_consume(&Token::LeftParen, "Expected '(' after method name")?;
         
         // Create a function expression for the method
-        let mut func_expr = FunctionExpressionParser::new().parse(parser)?;
+        let mut func_expr = FunctionExpressionNode::new().parse(parser)?;
         func_expr.generator = generator;
         func_expr.async_function = async_method;
         
@@ -206,18 +292,127 @@ impl ParserCombinator<MethodDefinition> for MethodDefinitionParser {
     }
 }
 
-pub struct StaticBlockParser;
+impl UnparserCombinator<MethodDefinition> for MethodDefinitionNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &MethodDefinition) {
+        // Write static modifier if present
+        if node.static_method {
+            unparser.write_str("static");
+            unparser.space();
+        }
+        
+        // Write method kind
+        match node.kind {
+            MethodKind::Constructor => {
+                unparser.write_str("constructor");
+            },
+            MethodKind::Method => {
+                // For async methods
+                if node.value.async_function {
+                    unparser.write_str("async");
+                    unparser.space();
+                }
+                
+                // For generator methods
+                if node.value.generator {
+                    unparser.write_char('*');
+                }
+            },
+            MethodKind::Get => {
+                unparser.write_str("get");
+                unparser.space();
+            },
+            MethodKind::Set => {
+                unparser.write_str("set");
+                unparser.space();
+            }
+        }
+        
+        // Write the method key
+        if node.computed {
+            unparser.write_char('[');
+            match &node.key {
+                PropertyKey::Expression(expr) => {
+                    ExpressionNode::new().unparse(unparser, expr);
+                },
+                PropertyKey::Identifier(id) => {
+                    unparser.write_str(&id.name);
+                },
+                PropertyKey::Literal(lit) => {
+                    match lit {
+                        Literal::StringLiteral(s) => unparser.write_str(&format!("\"{}\"", s.value)),
+                        Literal::NumericLiteral(n) => unparser.write_str(&n.value.to_string()),
+                        _ => unparser.write_str("\"unknown\""),
+                    }
+                },
+                PropertyKey::PrivateIdentifier(id) => {
+                    unparser.write_char('#');
+                    unparser.write_str(&id.name);
+                }
+            }
+            unparser.write_char(']');
+        } else {
+            match &node.key {
+                PropertyKey::Identifier(id) => {
+                    unparser.write_str(&id.name);
+                },
+                PropertyKey::Literal(lit) => {
+                    match lit {
+                        Literal::StringLiteral(s) => unparser.write_str(&format!("\"{}\"", s.value)),
+                        Literal::NumericLiteral(n) => unparser.write_str(&n.value.to_string()),
+                        _ => unparser.write_str("\"unknown\""),
+                    }
+                },
+                PropertyKey::Expression(_) => {
+                    // This shouldn't happen for non-computed properties
+                    unparser.write_str("\"error\"");
+                },
+                PropertyKey::PrivateIdentifier(id) => {
+                    unparser.write_char('#');
+                    unparser.write_str(&id.name);
+                }
+            }
+        }
+        
+        // Write the method parameters and body
+        unparser.write_char('(');
+        
+        // Write parameters
+        if !node.value.params.is_empty() {
+            for (i, param) in node.value.params.iter().enumerate() {
+                if i > 0 {
+                    unparser.write_char(',');
+                    unparser.space();
+                }
+                PatternNode::new().unparse(unparser, param);
+            }
+        }
+        
+        unparser.write_char(')');
+        unparser.space();
+        
+        // Write the method body
+        BlockStatementNode::new().unparse(unparser, &node.value.body);
+    }
+}
 
-impl StaticBlockParser {
+pub struct StaticBlockNode;
+
+impl StaticBlockNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<StaticBlock> for StaticBlockParser {
+impl ParserCombinator<StaticBlock> for StaticBlockNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<StaticBlock> {
-        let block = BlockStatementParser::new().parse(parser)?;
+        let block = BlockStatementNode::new().parse(parser)?;
         
         Ok(StaticBlock { body: block })
+    }
+}
+
+impl UnparserCombinator<StaticBlock> for StaticBlockNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &StaticBlock) {
+        BlockStatementNode::new().unparse(unparser, &node.body);
     }
 }

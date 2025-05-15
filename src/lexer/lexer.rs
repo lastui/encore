@@ -63,7 +63,8 @@ impl<'a> Lexer<'a> {
                 } else if b >= 128 {
                     // Found a non-ASCII byte
                     is_all_ascii = false;
-                    // Process it with the regular advance method
+                    
+                    // Use advance() which properly handles UTF-8 characters
                     self.advance();
                     continue;
                 }
@@ -71,121 +72,125 @@ impl<'a> Lexer<'a> {
 
             // If we reach here, either we're at the end or the next character 
             // is not an identifier character
-            if !self.is_at_end() && self.is_alphanumeric(self.peek()) {
-                let c = self.advance();
-                // Check if we just processed a non-ASCII character
-                if !c.is_ascii() {
-                    is_all_ascii = false;
+            if !self.is_at_end() {
+                let c = self.peek();
+                if self.is_alphanumeric(c) {
+                    self.advance();
+                    if !c.is_ascii() {
+                        is_all_ascii = false;
+                    }
+                    continue;
                 }
-            } else {
-                break;
             }
+            
+            // Not a valid identifier character or end of source
+            break;
         }
 
         // Calculate the length of the identifier
         let length = self.current - self.start;
 
         // Only check for keywords if the identifier is within the length range of keywords
-        // and is all ASCII (since all keywords are ASCII)
-        let token_type = if is_all_ascii && length >= 2 && length <= 10 {
-            // For ASCII identifiers, we can do direct byte comparisons
-            let bytes = &self.bytes[self.start..self.current];
+            // and is all ASCII (since all keywords are ASCII)
+            let token_type = if is_all_ascii && length >= 2 && length <= 10 {
+                // For ASCII identifiers, we can do direct byte comparisons
+                let bytes = &self.bytes[self.start..self.current];
+                
+                // First check by length for faster matching
+                match bytes.len() {
+                    2 => match bytes {
+                        b"do" => Token::Do,
+                        b"if" => Token::If,
+                        b"in" => Token::In,
+                        b"of" => Token::Of,
+                        b"as" => Token::As,
+                        _ => self.create_identifier_token(),
+                    },
+                    3 => match bytes {
+                        b"for" => Token::For,
+                        b"let" => Token::Let,
+                        b"new" => Token::New,
+                        b"try" => Token::Try,
+                        b"var" => Token::Var,
+                        b"get" => Token::Get,
+                        b"set" => Token::Set,
+                        _ => self.create_identifier_token(),
+                    },
+                    4 => match bytes {
+                        b"case" => Token::Case,
+                        b"else" => Token::Else,
+                        b"enum" => Token::Enum,
+                        b"from" => Token::From,
+                        b"null" => Token::Null,
+                        b"this" => Token::This,
+                        b"true" => Token::True,
+                        b"void" => Token::Void,
+                        b"with" => Token::With,
+                        b"eval" => Token::Eval,
+                        _ => self.create_identifier_token(),
+                    },
+                    5 => match bytes {
+                        b"async" => Token::Async,
+                        b"await" => Token::Await,
+                        b"break" => Token::Break,
+                        b"catch" => Token::Catch,
+                        b"class" => Token::Class,
+                        b"const" => Token::Const,
+                        b"false" => Token::False,
+                        b"super" => Token::Super,
+                        b"throw" => Token::Throw,
+                        b"while" => Token::While,
+                        b"yield" => Token::Yield,
+                        _ => self.create_identifier_token(),
+                    },
+                    6 => match bytes {
+                        b"delete" => Token::Delete,
+                        b"export" => Token::Export,
+                        b"import" => Token::Import,
+                        b"public" => Token::Public,
+                        b"return" => Token::Return,
+                        b"static" => Token::Static,
+                        b"switch" => Token::Switch,
+                        b"target" => Token::Target,
+                        b"typeof" => Token::Typeof,
+                        _ => self.create_identifier_token(),
+                    },
+                    7 => match bytes {
+                        b"default" => Token::Default,
+                        b"extends" => Token::Extends,
+                        b"finally" => Token::Finally,
+                        b"package" => Token::Package,
+                        b"private" => Token::Private,
+                        _ => self.create_identifier_token(),
+                    },
+                    8 => match bytes {
+                        b"continue" => Token::Continue,
+                        b"debugger" => Token::Debugger,
+                        b"function" => Token::Function,
+                        _ => self.create_identifier_token(),
+                    },
+                    9 => match bytes {
+                        b"arguments" => Token::Arguments,
+                        b"interface" => Token::Interface,
+                        b"protected" => Token::Protected,
+                        b"undefined" => Token::Undefined,
+                        _ => self.create_identifier_token(),
+                    },
+                    10 => match bytes {
+                        b"instanceof" => Token::InstanceOf,
+                        b"implements" => Token::Implements,
+                        b"constructor" => Token::Constructor,
+                        _ => self.create_identifier_token(),
+                    },
+                    _ => self.create_identifier_token(),
+                }
+            } else {
+                // For non-ASCII identifiers or identifiers with lengths outside keyword range
+                self.create_identifier_token()
+            };
             
-            // First check by length for faster matching
-            match bytes.len() {
-                2 => match bytes {
-                    b"do" => Token::Do,
-                    b"if" => Token::If,
-                    b"in" => Token::In,
-                    b"of" => Token::Of,
-                    b"as" => Token::As,
-                    _ => self.create_identifier_token(),
-                },
-                3 => match bytes {
-                    b"for" => Token::For,
-                    b"let" => Token::Let,
-                    b"new" => Token::New,
-                    b"try" => Token::Try,
-                    b"var" => Token::Var,
-                    b"get" => Token::Get,
-                    b"set" => Token::Set,
-                    _ => self.create_identifier_token(),
-                },
-                4 => match bytes {
-                    b"case" => Token::Case,
-                    b"else" => Token::Else,
-                    b"enum" => Token::Enum,
-                    b"from" => Token::From,
-                    b"null" => Token::Null,
-                    b"this" => Token::This,
-                    b"true" => Token::True,
-                    b"void" => Token::Void,
-                    b"with" => Token::With,
-                    b"eval" => Token::Eval,
-                    _ => self.create_identifier_token(),
-                },
-                5 => match bytes {
-                    b"async" => Token::Async,
-                    b"await" => Token::Await,
-                    b"break" => Token::Break,
-                    b"catch" => Token::Catch,
-                    b"class" => Token::Class,
-                    b"const" => Token::Const,
-                    b"false" => Token::False,
-                    b"super" => Token::Super,
-                    b"throw" => Token::Throw,
-                    b"while" => Token::While,
-                    b"yield" => Token::Yield,
-                    _ => self.create_identifier_token(),
-                },
-                6 => match bytes {
-                    b"delete" => Token::Delete,
-                    b"export" => Token::Export,
-                    b"import" => Token::Import,
-                    b"public" => Token::Public,
-                    b"return" => Token::Return,
-                    b"static" => Token::Static,
-                    b"switch" => Token::Switch,
-                    b"target" => Token::Target,
-                    b"typeof" => Token::Typeof,
-                    _ => self.create_identifier_token(),
-                },
-                7 => match bytes {
-                    b"default" => Token::Default,
-                    b"extends" => Token::Extends,
-                    b"finally" => Token::Finally,
-                    b"package" => Token::Package,
-                    b"private" => Token::Private,
-                    _ => self.create_identifier_token(),
-                },
-                8 => match bytes {
-                    b"continue" => Token::Continue,
-                    b"debugger" => Token::Debugger,
-                    b"function" => Token::Function,
-                    _ => self.create_identifier_token(),
-                },
-                9 => match bytes {
-                    b"arguments" => Token::Arguments,
-                    b"interface" => Token::Interface,
-                    b"protected" => Token::Protected,
-                    b"undefined" => Token::Undefined,
-                    _ => self.create_identifier_token(),
-                },
-                10 => match bytes {
-                    b"instanceof" => Token::InstanceOf,
-                    b"implements" => Token::Implements,
-                    b"constructor" => Token::Constructor,
-                    _ => self.create_identifier_token(),
-                },
-                _ => self.create_identifier_token(),
-            }
-        } else {
-            // For non-ASCII identifiers or identifiers with lengths outside keyword range
-            self.create_identifier_token()
-        };
-        
-        // Add the token
-        emit_token!(self, token_type);
+            // Add the token
+            emit_token!(self, token_type);
     }
 
     // Helper method to create an identifier token
@@ -496,76 +501,82 @@ impl<'a> Lexer<'a> {
 
     /// Parses a regular expression literal
     fn regexp(&mut self) -> Result<(), LexerError> {
-        let start_column = self.column - 1;
-        let mut pattern = String::with_capacity(16);
+    let start_column = self.column - 1;
+    let mut pattern = String::with_capacity(16);
+    let mut in_character_class = false;
+    
+    // Parse the pattern
+    while !self.is_at_end() && (in_character_class || self.peek() != '/') {
+        let c = self.peek();
         
-        // Parse the pattern
-        while !self.is_at_end() && self.peek() != '/' {
-            if self.peek() == '\\' {
-                pattern.push(self.advance()); // Add the escape character
-                
-                if self.is_at_end() {
-                    return Err(LexerError::new(
-                        "Unterminated regular expression: escape sequence not completed",
-                        self.line,
-                        start_column
-                    ));
-                }
-                
-                // Add the escaped character (whatever it is)
-                pattern.push(self.advance());
-            } else if self.peek() == '\n' {
+        if c == '[' && !in_character_class {
+            // Start of character class
+            in_character_class = true;
+            pattern.push(self.advance());
+        } else if c == ']' && in_character_class {
+            // End of character class
+            in_character_class = false;
+            pattern.push(self.advance());
+        } else if c == '\\' {
+            // Handle escape sequences
+            pattern.push(self.advance()); // Add the backslash
+            
+            if self.is_at_end() {
                 return Err(LexerError::new(
-                    "Unterminated regular expression: newline in pattern",
+                    "Unterminated regular expression: escape sequence not completed",
                     self.line,
                     start_column
                 ));
-            } else {
-                pattern.push(self.advance());
             }
-        }
-        
-        if self.is_at_end() {
+            
+            // Add the escaped character (whatever it is)
+            pattern.push(self.advance());
+        } else if c == '\n' {
             return Err(LexerError::new(
-                "Unterminated regular expression",
+                "Unterminated regular expression: newline in pattern",
                 self.line,
                 start_column
             ));
+        } else {
+            pattern.push(self.advance());
         }
-        
-        // Consume the closing slash
-        self.advance();
-        
-        // Parse flags
-        let mut flags = String::with_capacity(4);
-        while !self.is_at_end() && self.is_regexp_flag(self.peek()) {
-            flags.push(self.advance());
-        }
-        
-        // Validate flags (no duplicates, only valid flags)
-        let mut seen_flags = HashSet::with_capacity(flags.len());
-        for flag in flags.chars() {
-            if !seen_flags.insert(flag) {
-                return Err(LexerError::new(
-                    &format!("Duplicate flag '{}' in regular expression", flag),
-                    self.line,
-                    self.column - 1
-                ));
-            }
-            
-            if !matches!(flag, 'g' | 'i' | 'm' | 's' | 'u' | 'y' | 'd') {
-                return Err(LexerError::new(
-                    &format!("Invalid regular expression flag '{}'", flag),
-                    self.line,
-                    self.column - 1
-                ));
-            }
-        }
-
-        emit_token!(self, Token::RegExpLiteral(pattern, flags));
-
-        Ok(())
     }
+    
+    if self.is_at_end() {
+        return Err(LexerError::new(
+            "Unterminated regular expression",
+            self.line,
+            start_column
+        ));
+    }
+    
+    // Consume the closing slash
+    self.advance();
+    
+    // Parse flags
+    let mut flags = String::new();
+    while !self.is_at_end() && self.is_regexp_flag(self.peek()) {
+        flags.push(self.advance());
+    }
+    
+    // Validate flags (no duplicates)
+    let mut seen_flags = HashSet::new();
+    for flag in flags.chars() {
+        if !seen_flags.insert(flag) {
+            return Err(LexerError::new(
+                &format!("Duplicate flag '{}' in regular expression", flag),
+                self.line,
+                self.column - 1
+            ));
+        }
+    }
+    
+    // Emit the token
+    emit_token!(self, Token::RegExpLiteral(pattern, flags));
+    
+    Ok(())
+}
+
 
     #[inline(always)]
     fn is_regexp_flag(&self, c: char) -> bool {
@@ -1257,7 +1268,16 @@ impl<'a> Lexer<'a> {
     
     #[inline(always)]
     fn is_alpha(&self, c: char) -> bool {
-        (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$'
+        // Include $ character which is valid in JavaScript identifiers
+        (c >= 'a' && c <= 'z') || 
+        (c >= 'A' && c <= 'Z') || 
+        c == '_' || 
+        c == '$' || 
+        // For non-ASCII characters, use a simple heuristic
+        // This covers most Unicode letters that would be valid in JS identifiers
+        (c > '\x7F' && !c.is_whitespace() && !c.is_control()) ||
+        // Zero-width characters allowed in JS identifiers
+        c == '\u{200C}' || c == '\u{200D}'
     }
     
     #[inline(always)]

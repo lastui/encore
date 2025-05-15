@@ -1,21 +1,24 @@
 use crate::ast::*;
 use crate::lexer::*;
 use crate::parser::*;
+use crate::unparser::*;
 use super::pattern::*;
 use super::expression::*;
 use super::statement::*;
 
-/// Parser for function expressions
-pub struct FunctionExpressionParser;
+pub struct FunctionExpressionNode;
 
-impl FunctionExpressionParser {
+impl FunctionExpressionNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<FunctionExpression> for FunctionExpressionParser {
-    fn parse(&self, parser: &mut Parser) -> ParseResult<FunctionExpression> {        
+impl ParserCombinator<FunctionExpression> for FunctionExpressionNode {
+    fn parse(&self, parser: &mut Parser) -> ParseResult<FunctionExpression> {
+        // Check if this is an async function
+        let async_function = parser.consume(&Token::Async);
+        
         // Consume the 'function' keyword
         parser.assert_consume(&Token::Function, "Expected 'function'")?;
         
@@ -24,7 +27,7 @@ impl ParserCombinator<FunctionExpression> for FunctionExpressionParser {
         
         // Parse the function name if present
         let id = if matches!(parser.peek(), Token::Identifier(_)) {
-            Some(IdentifierParser::new().parse(parser)?)
+            Some(IdentifierNode::new().parse(parser)?)
         } else {
             None
         };
@@ -36,18 +39,18 @@ impl ParserCombinator<FunctionExpression> for FunctionExpressionParser {
         
         if !parser.check(&Token::RightParen) {
             // Parse the first parameter
-            params.push(PatternParser::new().parse(parser)?);
+            params.push(PatternNode::new().parse(parser)?);
             
             // Parse additional parameters
             while parser.consume(&Token::Comma) {
-                params.push(PatternParser::new().parse(parser)?);
+                params.push(PatternNode::new().parse(parser)?);
             }
         }
         
         parser.assert_consume(&Token::RightParen, "Expected ')' after function parameters")?;
 
-        let body = parser.with_context(LexicalContext::FunctionBody { allow_await: false, allow_yield: generator }, |p| {
-            BlockStatementParser::new().parse(p)
+        let body = parser.with_context(LexicalContext::FunctionBody { allow_await: async_function, allow_yield: generator }, |p| {
+            BlockStatementNode::new().parse(p)
         })?;
         
         Ok(FunctionExpression {
@@ -55,79 +58,67 @@ impl ParserCombinator<FunctionExpression> for FunctionExpressionParser {
             params,
             body,
             generator,
-            async_function: false,
+            async_function,
         })
     }
 }
 
-/// Parser for async function expressions
-pub struct AsyncFunctionExpressionParser;
 
-impl AsyncFunctionExpressionParser {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl ParserCombinator<FunctionExpression> for AsyncFunctionExpressionParser {
-    fn parse(&self, parser: &mut Parser) -> ParseResult<FunctionExpression> {
-        // Consume the 'async' keyword
-        parser.assert_consume(&Token::Async, "Expected 'async'")?;
+impl UnparserCombinator<FunctionExpression> for FunctionExpressionNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &FunctionExpression) {
+        // Write async if it's an async function
+        if node.async_function {
+            unparser.write_str("async");
+            unparser.write_char(' ');
+        }
         
-        // Consume the 'function' keyword
-        parser.assert_consume(&Token::Function, "Expected 'function' after 'async'")?;
+        // Write the function keyword
+        unparser.write_str("function");
         
-        // Check if this is a generator function
-        let generator = parser.consume(&Token::Star);
+        // Write * if it's a generator function
+        if node.generator {
+            unparser.write_char('*');
+        }
         
-        // Parse the function name if present
-        let id = if matches!(parser.peek(), Token::Identifier(_)) {
-            Some(IdentifierParser::new().parse(parser)?)
-        } else {
-            None
-        };
-
-        // Parse the parameter list
-        parser.assert_consume(&Token::LeftParen, "Expected '(' after function name")?;
+        // Write the function name if present
+        if let Some(id) = &node.id {
+            //unparser.space();
+            unparser.write_char(' ');
+            unparser.write_str(&id.name);
+        }
         
-        let mut params = Vec::new();
+        // Write the parameter list
+        unparser.write_char('(');
         
-        if !parser.check(&Token::RightParen) {
-            // Parse the first parameter
-            params.push(PatternParser::new().parse(parser)?);
+        // Write parameters
+        if !node.params.is_empty() {
+            PatternNode::new().unparse(unparser, &node.params[0]);
             
-            // Parse additional parameters
-            while parser.consume(&Token::Comma) {
-                params.push(PatternParser::new().parse(parser)?);
+            for param in &node.params[1..] {
+                unparser.write_char(',');
+                unparser.space();
+                PatternNode::new().unparse(unparser, param);
             }
         }
         
-        parser.assert_consume(&Token::RightParen, "Expected ')' after function parameters")?;
-
-        let body = parser.with_context(LexicalContext::FunctionBody { allow_await: true, allow_yield: generator }, |p| {
-            BlockStatementParser::new().parse(p)
-        })?;
-
-        Ok(FunctionExpression {
-            id,
-            params,
-            body,
-            generator,
-            async_function: true,
-        })
+        unparser.write_char(')');
+        unparser.space();
+        
+        // Write the function body
+        BlockStatementNode::new().unparse(unparser, &node.body);
     }
 }
 
 /// Parser for arrow function expressions
-pub struct ArrowFunctionExpressionParser;
+pub struct ArrowFunctionExpressionNode;
 
-impl ArrowFunctionExpressionParser {
+impl ArrowFunctionExpressionNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<ArrowFunctionExpression> for ArrowFunctionExpressionParser {
+impl ParserCombinator<ArrowFunctionExpression> for ArrowFunctionExpressionNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<ArrowFunctionExpression> {
         // Check for async arrow function
         let async_function = parser.consume(&Token::Async);
@@ -139,7 +130,7 @@ impl ParserCombinator<ArrowFunctionExpression> for ArrowFunctionExpressionParser
             // Multiple parameters in parentheses
             if !parser.check(&Token::RightParen) {
                 // Parse the first parameter
-                params.push(PatternParser::new().parse(parser)?);
+                params.push(PatternNode::new().parse(parser)?);
                 
                 // Parse additional parameters
                 while parser.consume(&Token::Comma) {
@@ -149,14 +140,14 @@ impl ParserCombinator<ArrowFunctionExpression> for ArrowFunctionExpressionParser
                     }
                     
                     // Parse the next parameter
-                    params.push(PatternParser::new().parse(parser)?);
+                    params.push(PatternNode::new().parse(parser)?);
                 }
             }
             
             parser.assert_consume(&Token::RightParen, "Expected ')' after arrow function parameters")?;
         } else {
             // Single parameter without parentheses
-            params.push(PatternParser::new().parse(parser)?);
+            params.push(PatternNode::new().parse(parser)?);
         }
         
         // Consume the arrow
@@ -166,10 +157,10 @@ impl ParserCombinator<ArrowFunctionExpression> for ArrowFunctionExpressionParser
 
         let body = parser.with_context(LexicalContext::FunctionBody { allow_await: async_function, allow_yield: false }, |p| {
             if p.check(&Token::LeftBrace) {
-                let block = BlockStatementParser::new().parse(p)?;
+                let block = BlockStatementNode::new().parse(p)?;
                 Ok(ArrowFunctionBody::BlockStatement(block))
             } else {
-                let expr = ExpressionParser::new().parse(p)?;
+                let expr = ExpressionNode::new().parse(p)?;
                 Ok(ArrowFunctionBody::Expression(Box::new(expr)))
             }
         })?;
@@ -183,60 +174,48 @@ impl ParserCombinator<ArrowFunctionExpression> for ArrowFunctionExpressionParser
     }
 }
 
-
-/// Parser for await expressions
-pub struct AwaitExpressionParser;
-
-impl AwaitExpressionParser {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl ParserCombinator<AwaitExpression> for AwaitExpressionParser {
-    fn parse(&self, parser: &mut Parser) -> ParseResult<AwaitExpression> {        
-        // Consume the 'await' keyword
-        parser.assert_consume(&Token::Await, "Expected 'await'")?;
+impl UnparserCombinator<ArrowFunctionExpression> for ArrowFunctionExpressionNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &ArrowFunctionExpression) {
+        // Write async if it's an async arrow function
+        if node.async_function {
+            unparser.write_str("async");
+            unparser.space();
+        }
         
-        // Parse the argument
-        let argument = Box::new(ExpressionParser::new().parse(parser)?);
-
-        Ok(AwaitExpression {
-            argument,
-        })
-    }
-}
-
-/// Parser for yield expressions
-pub struct YieldExpressionParser;
-
-impl YieldExpressionParser {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl ParserCombinator<YieldExpression> for YieldExpressionParser {
-    fn parse(&self, parser: &mut Parser) -> ParseResult<YieldExpression> {
-        // Consume the 'yield' keyword
-        parser.assert_consume(&Token::Yield, "Expected 'yield'")?;
-        
-        // Check for delegate (yield*)
-        let delegate = parser.consume(&Token::Star);
-        
-        // Parse the argument if present
-        let argument = if parser.check(&Token::Semicolon) || parser.is_at_end() || 
-                         parser.check(&Token::RightBrace) || parser.check(&Token::Comma) ||
-                         parser.check(&Token::RightParen) || parser.check(&Token::RightBracket) ||
-                         parser.check(&Token::Colon) || parser.previous_line_terminator() {
-            None
+        // Write the parameter list
+        if node.params.len() == 1 && node.expression {
+            // Single parameter without parentheses for expression body arrow functions
+            PatternNode::new().unparse(unparser, &node.params[0]);
         } else {
-            Some(Box::new(ExpressionParser::new().parse(parser)?))
-        };
+            // Multiple parameters or block body requires parentheses
+            unparser.write_char('(');
+            
+            if !node.params.is_empty() {
+                PatternNode::new().unparse(unparser, &node.params[0]);
+                
+                for param in &node.params[1..] {
+                    unparser.write_char(',');
+                    unparser.space();
+                    PatternNode::new().unparse(unparser, param);
+                }
+            }
+            
+            unparser.write_char(')');
+        }
         
-        Ok(YieldExpression {
-            argument,
-            delegate,
-        })
+        // Write the arrow
+        unparser.space();
+        unparser.write_str("=>");
+        unparser.space();
+        
+        // Write the function body
+        match &node.body {
+            ArrowFunctionBody::BlockStatement(block) => {
+                BlockStatementNode::new().unparse(unparser, block);
+            },
+            ArrowFunctionBody::Expression(expr) => {
+                ExpressionNode::new().unparse(unparser, expr);
+            }
+        }
     }
 }

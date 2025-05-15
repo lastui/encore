@@ -2,6 +2,7 @@ use crate::lexer::Token;
 use super::error::ParseResult;
 use super::parser::Parser;
 
+// TODO remove?
 impl<'a> Parser<'a> {
     pub fn consume_semicolon(&mut self, message: &str) -> ParseResult<&Token> {
         if self.consume(&Token::Semicolon) {

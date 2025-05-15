@@ -10,7 +10,7 @@ pub struct ParserError {
     pub source_line: Option<String>,
     pub source_span: Option<(usize, usize)>,
     pub context_stack: Vec<String>,
-    pub current_token: Token,
+    pub token_stack: Vec<String>,
 }
 
 impl ParserError {
@@ -18,6 +18,8 @@ impl ParserError {
     pub fn new(parser: &Parser, message: &str) -> Self {
 
         let context_stack = parser.get_context_stack_info();
+
+        let token_stack = parser.get_token_stack_info();
             
         let token = parser.peek();
 
@@ -191,7 +193,7 @@ impl ParserError {
             source_line: Some(source_line),
             source_span: Some((adjusted_column, adjusted_span_end)),
             context_stack,
-            current_token: token.clone(),
+            token_stack,
         }
     }
     
@@ -243,12 +245,13 @@ impl fmt::Display for ParserError {
             writeln!(f, "at line {}, column {}", self.line, self.column)?;
         }
 
-        // Print current token information if available
-        if !matches!(self.current_token, Token::EOS) {
-            writeln!(f, "\nCurrent token: {:#?}", self.current_token)?;
+        if !self.token_stack.is_empty() {
+            writeln!(f, "\nToken stack:")?;
+            for (i, token) in self.token_stack.iter().enumerate() {
+                writeln!(f, "  {}: {}", i, token)?;
+            }
         }
-        
-        // Print context stack information if available
+
         if !self.context_stack.is_empty() {
             writeln!(f, "\nLexical context stack:")?;
             for (i, context) in self.context_stack.iter().enumerate() {
@@ -286,7 +289,7 @@ impl From<LexerError> for ParserError {
             source_line: None,
             source_span: None,
             context_stack: Vec::new(),
-            current_token: Token::EOS,
+            token_stack: Vec::new(),
         }
     }
 }

@@ -1,22 +1,23 @@
 use crate::ast::*;
 use crate::lexer::*;
 use crate::parser::*;
+use crate::unparser::*;
 use super::function::*;
-use super::call::*;
 use super::class::*;
 use super::array::*;
-use super::member::*;
 use super::pattern::*;
 use super::literal::*;
 use super::object::*;
 use super::this::*;
 use super::new::*;
+use super::await_expression::*;
+use super::yield_expression::*;
 
 
 /// Parser for JavaScript expressions
-pub struct ExpressionParser;
+pub struct ExpressionNode;
 
-impl ExpressionParser {
+impl ExpressionNode {
     pub fn new() -> Self {
         Self
     }
@@ -30,7 +31,7 @@ impl ExpressionParser {
         while !parser.is_at_end() && precedence < self.get_precedence(parser) {
             left = self.parse_infix(parser, left)?;
         }
-        
+
         Ok(left)
     }
     
@@ -40,12 +41,12 @@ impl ExpressionParser {
             Token::Identifier(_) => {
                 // Check if this is a single-parameter arrow function
                 let pos = parser.save_position();
-                let ident = IdentifierParser::new().parse(parser)?;
+                let ident = IdentifierNode::new().parse(parser)?;
                 
                 if parser.check(&Token::Arrow) {
                     // This is an arrow function with a single parameter
                     parser.restore_position(pos);
-                    return ArrowFunctionExpressionParser::new().parse(parser).map(Expression::ArrowFunctionExpression);
+                    return ArrowFunctionExpressionNode::new().parse(parser).map(Expression::ArrowFunctionExpression);
                 }
                 
                 Ok(Expression::Identifier(ident))
@@ -56,29 +57,30 @@ impl ExpressionParser {
             Token::RegExpLiteral(_, _) |
             Token::True |
             Token::False |
+            Token::Undefined |
             Token::Null => {
-                LiteralParser::new().parse(parser).map(Expression::Literal)
+                LiteralNode::new().parse(parser).map(Expression::Literal)
             },
             Token::This => {
-                ThisExpressionParser::new().parse(parser).map(Expression::ThisExpression)
+                ThisExpressionNode::new().parse(parser).map(Expression::ThisExpression)
             },
             Token::LeftBracket => {
-                ArrayExpressionParser::new().parse(parser).map(Expression::ArrayExpression)
+                ArrayExpressionNode::new().parse(parser).map(Expression::ArrayExpression)
             },
             Token::LeftBrace => {
-                ObjectExpressionParser::new().parse(parser).map(Expression::ObjectExpression)
+                ObjectExpressionNode::new().parse(parser).map(Expression::ObjectExpression)
             },
             Token::Function => {
-                FunctionExpressionParser::new().parse(parser).map(Expression::FunctionExpression)
+                FunctionExpressionNode::new().parse(parser).map(Expression::FunctionExpression)
             },
             Token::Class => {
-                ClassExpressionParser::new().parse(parser).map(Expression::ClassExpression)
+                ClassExpressionNode::new().parse(parser).map(Expression::ClassExpression)
             },
             Token::New => {
-                NewExpressionParser::new().parse(parser).map(Expression::NewExpression)
+                NewExpressionNode::new().parse(parser).map(Expression::NewExpression)
             },
             Token::Super => {
-                SuperExpressionParser::new().parse(parser).map(Expression::SuperExpression)
+                SuperExpressionNode::new().parse(parser).map(Expression::SuperExpression)
             },
             Token::LeftParen => {
                 self.parse_grouped_expression(parser)
@@ -98,25 +100,43 @@ impl ExpressionParser {
             },
             Token::Await => {
                 if parser.allows_await() {
-                    AwaitExpressionParser::new().parse(parser).map(Expression::AwaitExpression)
+                    AwaitExpressionNode::new().parse(parser).map(Expression::AwaitExpression)
                 } else {
                     Err(parser.error_at_current("'await' expression is only allowed within async functions"))
                 }
             },
             Token::Yield => {
                 if parser.allows_yield() {
-                    YieldExpressionParser::new().parse(parser).map(Expression::YieldExpression)
+                    YieldExpressionNode::new().parse(parser).map(Expression::YieldExpression)
                 } else {
                     Err(parser.error_at_current("'yield' expression is only allowed within generator functions"))
                 }
             },
             Token::Async => {
-                // Look ahead to see if this is an async function or arrow function
-                if parser.peek_next(1) == &Token::Function || (parser.peek_next(1) == &Token::LeftParen && self.is_arrow_function_ahead(parser)) {
-                    AsyncFunctionExpressionParser::new().parse(parser).map(Expression::FunctionExpression)
-                } else {
-                    // Otherwise, it's just an identifier named "async"
-                    IdentifierParser::new().parse(parser).map(Expression::Identifier)
+                // Save position to potentially backtrack
+                let pos = parser.save_position();
+                
+                // Check if this is an async function
+                if parser.peek_next(1) == &Token::Function {
+                    // This is an async function expression
+                    parser.advance(); // Consume 'async'
+                    
+                    // Parse the function expression
+                    let mut func_expr = FunctionExpressionNode::new().parse(parser)?;
+                    func_expr.async_function = true; // Mark as async
+                    
+                    Ok(Expression::FunctionExpression(func_expr))
+                } 
+                // Check if this is an async arrow function
+                else if parser.peek_next(1) == &Token::LeftParen || 
+                         (matches!(parser.peek_next(1), Token::Identifier(_)) && 
+                          parser.peek_next(2) == &Token::Arrow) {
+                    // This is an async arrow function
+                    ArrowFunctionExpressionNode::new().parse(parser).map(Expression::ArrowFunctionExpression)
+                } 
+                // Otherwise, it's just an identifier named "async"
+                else {
+                    IdentifierNode::new().parse(parser).map(Expression::Identifier)
                 }
             },
             _ => Err(parser.error_at_current("Expected an expression")),
@@ -127,25 +147,17 @@ impl ExpressionParser {
     fn parse_infix(&self, parser: &mut Parser, left: Expression) -> ParseResult<Expression> {
         match parser.peek() {
             Token::LeftParen => {
-                CallExpressionParser::new().parse_with_callee(parser, left).map(Expression::CallExpression)
+                self.parse_with_callee(parser, left, false).map(Expression::CallExpression)
             },
-            Token::Dot |
-            Token::LeftBracket => {
-                MemberExpressionParser::new().parse_with_object(parser, left).map(Expression::MemberExpression)
+            Token::LeftBracket |
+            Token::Dot => {
+                self.parse_with_object(parser, left, false).map(Expression::MemberExpression)
             },
             Token::QuestionDot => {
-                // Optional chaining
-                parser.advance(); // Consume the '?.'
-                
-                // Check if this is an optional function call
-                if parser.check(&Token::LeftParen) {
-                    // Optional function call: obj?.(args)
-                    let call_expr = CallExpressionParser::new().parse_with_callee(parser, left)?;
-                    Ok(Expression::CallExpression(call_expr))
+                if matches!(parser.peek_next(1), &Token::LeftParen) {
+                    self.parse_with_callee(parser, left, true).map(Expression::CallExpression)
                 } else {
-                    // Optional property access: obj?.prop
-                    let member_expr = MemberExpressionParser::new().parse_with_object(parser, left)?;
-                    Ok(Expression::MemberExpression(member_expr))
+                    self.parse_with_object(parser, left, true).map(Expression::MemberExpression)
                 }
             },
             Token::PlusPlus |
@@ -220,7 +232,7 @@ impl ExpressionParser {
         // Check if this might be an arrow function with parameters
         if self.is_arrow_function_ahead(parser) {
             parser.restore_position(pos);
-            return ArrowFunctionExpressionParser::new().parse(parser).map(Expression::ArrowFunctionExpression);
+            return ArrowFunctionExpressionNode::new().parse(parser).map(Expression::ArrowFunctionExpression);
         }
         
         // Consume the opening parenthesis
@@ -245,14 +257,114 @@ impl ExpressionParser {
         Ok(expr)
     }
 
+    fn parse_with_callee(&self, parser: &mut Parser, callee: Expression, optional: bool) -> ParseResult<CallExpression> {
+        // Consume the question-dot token if this is optional chaining
+        if optional {
+            parser.assert_consume(&Token::QuestionDot, "Expected '?.' in optional chaining")?;
+        }
+        
+        parser.assert_consume(&Token::LeftParen, "Expected '(' after function name")?;
+        
+        let mut arguments = Vec::new();
+
+        if !parser.check(&Token::RightParen) {
+            arguments.push(ExpressionNode::new().parse(parser)?);
+
+            while parser.consume(&Token::Comma) && !parser.check(&Token::RightParen) {
+                arguments.push(ExpressionNode::new().parse(parser)?);
+            }
+        }
+
+        parser.assert_consume(&Token::RightParen, "Expected ')' after function arguments")?;
+        
+        Ok(CallExpression {
+            callee: Box::new(callee),
+            arguments,
+            optional,
+        })
+    }
+
+    fn parse_with_object(&self, parser: &mut Parser, object: Expression, optional: bool) -> ParseResult<MemberExpression> {
+        // Consume the dot or question-dot token
+        if optional {
+            parser.assert_consume(&Token::QuestionDot, "Expected '?.' in optional chaining")?;
+        } else if parser.check(&Token::Dot) {
+            parser.advance(); // Consume the '.'
+        }
+
+        // Parse the property access
+        let (property, computed) = if parser.consume(&Token::LeftBracket) {
+            // Computed property access: obj[expr] or obj?.[expr]
+            let expr = ExpressionNode::new().parse(parser)?;
+            parser.assert_consume(&Token::RightBracket, "Expected ']' after computed property")?;
+            (MemberProperty::Expression(Box::new(expr)), true)
+        } else {
+            // Static property access: obj.prop or obj?.prop
+            if let Token::Identifier(_) = parser.peek() {
+                let ident = IdentifierNode::new().parse(parser)?;
+                (MemberProperty::Identifier(ident), false)
+            } else if let Token::Default = parser.peek() {
+                // Special case for 'default' as property name
+                parser.advance(); // Consume the 'default' token
+                let name = "default".to_string().into_boxed_str();
+                (MemberProperty::Identifier(Identifier { name }), false)
+            } else {
+                return Err(parser.error_at_current("Expected identifier after '.' or '?.'"));
+            }
+        };
+
+        // Create the member expression
+        let member_expr = MemberExpression {
+            object: Box::new(object),
+            property,
+            computed,
+            optional,
+        };
+
+        if parser.check(&Token::LeftBracket) || parser.check(&Token::Dot) {
+            // Continue parsing the chain of regular property accesses
+            return self.parse_with_object(parser, Expression::MemberExpression(member_expr), false);
+        } else if parser.check(&Token::QuestionDot) {
+            // Save position to check what follows
+            let pos = parser.save_position();
+            parser.advance(); // Consume '?.'
+            
+            if parser.check(&Token::LeftParen) {
+                // This would be a function call, which we can't handle here
+                // Restore position and return the member expression we've parsed so far
+                parser.restore_position(pos);
+                return Ok(member_expr);
+            } else {
+                // Continue with optional property access
+                parser.restore_position(pos);
+                return self.parse_with_object(parser, Expression::MemberExpression(member_expr), true);
+            }
+        }
+
+        return Ok(member_expr);
+    }
+
     // Helper method to check if an arrow function is ahead
     fn is_arrow_function_ahead(&self, parser: &mut Parser) -> bool {
         // Save position
         let pos = parser.save_position();
         
         // Skip the async keyword if present
-        if parser.check(&Token::Async) {
+        let is_async = parser.check(&Token::Async);
+        if is_async {
             parser.advance();
+            
+            // For async arrow functions, we need at least one token after 'async'
+            if parser.is_at_end() {
+                parser.restore_position(pos);
+                return false;
+            }
+            
+            // If 'async' is followed by a line terminator, it's not an arrow function
+            if parser.previous_line_terminator() {
+                parser.restore_position(pos);
+                return false;
+            }
         }
         
         // Check for single parameter without parentheses
@@ -681,7 +793,7 @@ impl ExpressionParser {
     }
 }
 
-impl ParserCombinator<Expression> for ExpressionParser {
+impl ParserCombinator<Expression> for ExpressionNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<Expression> {
         self.parse_with_precedence(parser, Precedence::Lowest)
     }
@@ -734,6 +846,549 @@ impl Precedence {
             Precedence::Prefix => Precedence::Postfix,
             Precedence::Postfix => Precedence::Call,
             Precedence::Call => Precedence::Call, // Can't go higher
+        }
+    }
+}
+
+// Main expression unparser
+impl UnparserCombinator<Expression> for ExpressionNode {
+    fn unparse(&self, unparser: &mut Unparser, node: &Expression) {
+        match node {
+            Expression::Identifier(ident) => {
+                unparser.write_str(&ident.name);
+            },
+            Expression::Literal(lit) => {
+                self.unparse_literal(unparser, lit);
+            },
+            Expression::ArrayExpression(array) => {
+                ArrayExpressionNode::new().unparse(unparser, array);
+            },
+            Expression::ObjectExpression(obj) => {
+                ObjectExpressionNode::new().unparse(unparser, obj);
+            },
+            Expression::FunctionExpression(func) => {
+                FunctionExpressionNode::new().unparse(unparser, func);
+            },
+            Expression::ArrowFunctionExpression(arrow) => {
+                ArrowFunctionExpressionNode::new().unparse(unparser, arrow);
+            },
+            Expression::ClassExpression(class) => {
+                ClassExpressionNode::new().unparse(unparser, class);
+            },
+            Expression::TaggedTemplateExpression(tagged) => {
+                self.unparse_tagged_template(unparser, tagged);
+            },
+            Expression::MemberExpression(member) => {
+                self.unparse_member_expression(unparser, member);
+            },
+            Expression::SuperExpression(super_expr) => {
+                SuperExpressionNode::new().unparse(unparser, super_expr);
+            },
+            Expression::MetaProperty(meta) => {
+                self.unparse_meta_property(unparser, meta);
+            },
+            Expression::NewExpression(new_expr) => {
+                self.unparse_new_expression(unparser, new_expr);
+            },
+            Expression::CallExpression(call) => {
+                self.unparse_call_expression(unparser, call);
+            },
+            Expression::UpdateExpression(update) => {
+                self.unparse_update_expression(unparser, update);
+            },
+            Expression::AwaitExpression(await_expr) => {
+                AwaitExpressionNode::new().unparse(unparser, await_expr);
+            },
+            Expression::UnaryExpression(unary) => {
+                self.unparse_unary_expression(unparser, unary);
+            },
+            Expression::BinaryExpression(binary) => {
+                self.unparse_binary_expression(unparser, binary);
+            },
+            Expression::LogicalExpression(logical) => {
+                self.unparse_logical_expression(unparser, logical);
+            },
+            Expression::ConditionalExpression(cond) => {
+                self.unparse_conditional_expression(unparser, cond);
+            },
+            Expression::YieldExpression(yield_expr) => {
+                YieldExpressionNode::new().unparse(unparser, yield_expr);
+            },
+            Expression::AssignmentExpression(assign) => {
+                self.unparse_assignment_expression(unparser, assign);
+            },
+            Expression::SequenceExpression(seq) => {
+                self.unparse_sequence_expression(unparser, seq);
+            },
+            Expression::ThisExpression(this) => {
+                ThisExpressionNode::new().unparse(unparser, this);
+            },
+            // TODO implement
+//            Expression::TemplateLiteral(template) => {
+//                self.unparse_template_literal(unparser, template);
+//            },
+            //_ => {
+                // Fallback for any expression types not explicitly handled
+              //  unparser.write_str("/* unsupported expression */");
+            //}
+        }
+    }
+}
+
+// Helper methods for ExpressionNode
+impl ExpressionNode {
+    fn unparse_literal(&self, unparser: &mut Unparser, lit: &Literal) {
+        match lit {
+            Literal::StringLiteral(s) => {
+                unparser.write_char('"');
+                unparser.write_str(&s.value);
+                unparser.write_char('"');
+            },
+            Literal::NumericLiteral(n) => {
+                unparser.write_str(&n.value.to_string());
+            },
+            Literal::BooleanLiteral(b) => {
+                unparser.write_str(if b.value { "true" } else { "false" });
+            },
+            Literal::NullLiteral(_) => {
+                unparser.write_str("null");
+            },
+            Literal::UndefinedLiteral(_) => {
+                unparser.undefined();
+            },
+            Literal::RegExpLiteral(r) => {
+                unparser.write_char('/');
+                unparser.write_str(&r.pattern);
+                unparser.write_char('/');
+                unparser.write_str(&r.flags);
+            },
+            Literal::BigIntLiteral(b) => {
+                unparser.write_str(&b.value);
+                unparser.write_char('n');
+            }
+        }
+    }
+
+    fn unparse_tagged_template(&self, unparser: &mut Unparser, tagged: &TaggedTemplateExpression) {
+        // Unparse the tag
+        self.unparse(unparser, &tagged.tag);
+        
+        // Unparse the template literal
+        self.unparse_template_literal(unparser, &tagged.quasi);
+    }
+
+    fn unparse_template_literal(&self, unparser: &mut Unparser, template: &TemplateLiteral) {
+        unparser.write_char('`');
+        
+        for (i, elem) in template.quasis.iter().enumerate() {
+            // Write the template string part
+            unparser.write_str(&elem.value.raw);
+            
+            // If there's an expression after this quasi, write it
+            if i < template.expressions.len() {
+                unparser.write_str("${");
+                self.unparse(unparser, &template.expressions[i]);
+                unparser.write_char('}');
+            }
+        }
+        
+        unparser.write_char('`');
+    }
+
+    fn unparse_member_expression(&self, unparser: &mut Unparser, member: &MemberExpression) {
+        // Unparse the object
+        self.unparse(unparser, &member.object);
+        
+        // Handle optional chaining
+        if member.optional {
+            unparser.write_str("?.");
+        }
+        
+        // Unparse the property
+        match &member.property {
+            MemberProperty::Identifier(id) => {
+                if !member.optional {
+                    unparser.write_char('.');
+                }
+                unparser.write_str(&id.name);
+            },
+            MemberProperty::PrivateIdentifier(id) => {
+                // Handle private identifiers (class private fields/methods)
+                unparser.write_char('#');
+                unparser.write_str(&id.name);
+            },
+            MemberProperty::Expression(expr) => {
+                unparser.write_char('[');
+                self.unparse(unparser, expr);
+                unparser.write_char(']');
+            }
+        }
+    }
+
+    fn unparse_meta_property(&self, unparser: &mut Unparser, meta: &MetaProperty) {
+        unparser.write_str(&meta.meta.name);
+        unparser.write_char('.');
+        unparser.write_str(&meta.property.name);
+    }
+
+    fn unparse_new_expression(&self, unparser: &mut Unparser, new_expr: &NewExpression) {
+        unparser.write_str("new ");
+        
+        // Unparse the callee
+        self.unparse(unparser, &new_expr.callee);
+        
+        // Unparse the arguments
+        unparser.write_char('(');
+        
+        for (i, arg) in new_expr.arguments.iter().enumerate() {
+            if i > 0 {
+                unparser.write_char(',');
+                unparser.space();
+            }
+            self.unparse(unparser, arg);
+        }
+        
+        unparser.write_char(')');
+    }
+
+    fn unparse_call_expression(&self, unparser: &mut Unparser, call: &CallExpression) {
+        // Unparse the callee
+        self.unparse(unparser, &call.callee);
+        
+        // Handle optional chaining
+        if call.optional {
+            unparser.write_str("?.");
+        }
+        
+        // Unparse the arguments
+        unparser.write_char('(');
+        
+        for (i, arg) in call.arguments.iter().enumerate() {
+            if i > 0 {
+                unparser.write_char(',');
+                unparser.space();
+            }
+            self.unparse(unparser, arg);
+        }
+        
+        unparser.write_char(')');
+    }
+
+    fn unparse_update_expression(&self, unparser: &mut Unparser, update: &UpdateExpression) {
+        let operator_str = match update.operator {
+            UpdateOperator::Increment => "++",
+            UpdateOperator::Decrement => "--",
+        };
+        
+        if update.prefix {
+            unparser.write_str(operator_str);
+            self.unparse(unparser, &update.argument);
+        } else {
+            self.unparse(unparser, &update.argument);
+            unparser.write_str(operator_str);
+        }
+    }
+
+    fn unparse_unary_expression(&self, unparser: &mut Unparser, unary: &UnaryExpression) {
+        let operator_str = match unary.operator {
+            UnaryOperator::Plus => "+",
+            UnaryOperator::Minus => "-",
+            UnaryOperator::Not => "!",
+            UnaryOperator::BitwiseNot => "~",
+            UnaryOperator::Typeof => "typeof ",
+            UnaryOperator::Void => "void ",
+            UnaryOperator::Delete => "delete ",
+        };
+        
+        unparser.write_str(operator_str);
+        
+        // Determine if we need parentheses
+        let needs_parens = matches!(&*unary.argument, 
+            Expression::UnaryExpression(_) | 
+            Expression::BinaryExpression(_) | 
+            Expression::LogicalExpression(_) |
+            Expression::ConditionalExpression(_) |
+            Expression::AssignmentExpression(_)
+        ) && !matches!(unary.operator, UnaryOperator::Typeof | UnaryOperator::Void | UnaryOperator::Delete);
+        
+        // Unparse the argument
+        if needs_parens {
+            unparser.write_char('(');
+            self.unparse(unparser, &unary.argument);
+            unparser.write_char(')');
+        } else {
+            self.unparse(unparser, &unary.argument);
+        }
+    }
+
+
+    fn unparse_binary_expression(&self, unparser: &mut Unparser, binary: &BinaryExpression) {
+        let operator_str = match binary.operator {
+            BinaryOperator::Addition => "+",
+            BinaryOperator::Subtraction => "-",
+            BinaryOperator::Multiplication => "*",
+            BinaryOperator::Division => "/",
+            BinaryOperator::Remainder => "%",
+            BinaryOperator::Exponentiation => "**",
+            BinaryOperator::LeftShift => "<<",
+            BinaryOperator::RightShift => ">>",
+            BinaryOperator::UnsignedRightShift => ">>>",
+            BinaryOperator::BitwiseAnd => "&",
+            BinaryOperator::BitwiseOr => "|",
+            BinaryOperator::BitwiseXor => "^",
+            BinaryOperator::Equal => "==",
+            BinaryOperator::NotEqual => "!=",
+            BinaryOperator::StrictEqual => "===",
+            BinaryOperator::StrictNotEqual => "!==",
+            BinaryOperator::LessThan => "<",
+            BinaryOperator::LessThanOrEqual => "<=",
+            BinaryOperator::GreaterThan => ">",
+            BinaryOperator::GreaterThanOrEqual => ">=",
+            BinaryOperator::In => " in ",
+            BinaryOperator::InstanceOf => " instanceof ",
+        };
+        
+        // Determine if we need parentheses based on operator precedence
+        let left_needs_parens = self.needs_parentheses(&binary.left, &binary.operator, true);
+        let right_needs_parens = self.needs_parentheses(&binary.right, &binary.operator, false);
+        
+        // Unparse left operand
+        if left_needs_parens {
+            unparser.write_char('(');
+            self.unparse(unparser, &binary.left);
+            unparser.write_char(')');
+        } else {
+            self.unparse(unparser, &binary.left);
+        }
+        
+        // Add space before operator for readability
+        if !matches!(binary.operator, BinaryOperator::In | BinaryOperator::InstanceOf) {
+            unparser.space();
+        }
+        
+        // Write the operator
+        unparser.write_str(operator_str);
+        
+        // Add space after operator for readability
+        if !matches!(binary.operator, BinaryOperator::In | BinaryOperator::InstanceOf) {
+            unparser.space();
+        }
+        
+        // Unparse right operand
+        if right_needs_parens {
+            unparser.write_char('(');
+            self.unparse(unparser, &binary.right);
+            unparser.write_char(')');
+        } else {
+            self.unparse(unparser, &binary.right);
+        }
+    }
+
+    fn unparse_logical_expression(&self, unparser: &mut Unparser, logical: &LogicalExpression) {
+        let operator_str = match logical.operator {
+            LogicalOperator::And => "&&",
+            LogicalOperator::Or => "||",
+            LogicalOperator::NullishCoalescing => "??",
+        };
+        
+        // Determine if we need parentheses based on operator precedence
+        let left_needs_parens = self.needs_logical_parentheses(&logical.left, &logical.operator, true);
+        let right_needs_parens = self.needs_logical_parentheses(&logical.right, &logical.operator, false);
+        
+        // Unparse left operand
+        if left_needs_parens {
+            unparser.write_char('(');
+            self.unparse(unparser, &logical.left);
+            unparser.write_char(')');
+        } else {
+            self.unparse(unparser, &logical.left);
+        }
+        
+        // Add space before operator
+        unparser.space();
+        
+        // Write the operator
+        unparser.write_str(operator_str);
+        
+        // Add space after operator
+        unparser.space();
+        
+        // Unparse right operand
+        if right_needs_parens {
+            unparser.write_char('(');
+            self.unparse(unparser, &logical.right);
+            unparser.write_char(')');
+        } else {
+            self.unparse(unparser, &logical.right);
+        }
+    }
+
+    fn unparse_conditional_expression(&self, unparser: &mut Unparser, cond: &ConditionalExpression) {
+        // Determine if test needs parentheses
+        let test_needs_parens = matches!(&*cond.test,
+            Expression::AssignmentExpression(_) |
+            Expression::ConditionalExpression(_) |
+            Expression::SequenceExpression(_)
+        );
+        
+        // Unparse test expression
+        if test_needs_parens {
+            unparser.write_char('(');
+            self.unparse(unparser, &cond.test);
+            unparser.write_char(')');
+        } else {
+            self.unparse(unparser, &cond.test);
+        }
+        
+        // Write the question mark
+        unparser.space();
+        unparser.write_char('?');
+        unparser.space();
+        
+        // Unparse consequent expression
+        self.unparse(unparser, &cond.consequent);
+        
+        // Write the colon
+        unparser.space();
+        unparser.write_char(':');
+        unparser.space();
+        
+        // Unparse alternate expression
+        self.unparse(unparser, &cond.alternate);
+    }
+    
+    fn unparse_assignment_expression(&self, unparser: &mut Unparser, assign: &AssignmentExpression) {
+        // Unparse the left side
+        match &assign.left {
+            AssignmentLeft::Pattern(pattern) => {
+                PatternNode::new().unparse(unparser, pattern);
+            },
+            AssignmentLeft::Expression(expr) => {
+                self.unparse(unparser, expr);
+            }
+        }
+        
+        // Write the operator
+        unparser.space();
+        match assign.operator {
+            AssignmentOperator::Assign => unparser.write_char('='),
+            AssignmentOperator::PlusAssign => unparser.write_str("+="),
+            AssignmentOperator::MinusAssign => unparser.write_str("-="),
+            AssignmentOperator::MultiplyAssign => unparser.write_str("*="),
+            AssignmentOperator::DivideAssign => unparser.write_str("/="),
+            AssignmentOperator::RemainderAssign => unparser.write_str("%="),
+            AssignmentOperator::ExponentiationAssign => unparser.write_str("**="),
+            AssignmentOperator::LeftShiftAssign => unparser.write_str("<<="),
+            AssignmentOperator::RightShiftAssign => unparser.write_str(">>="),
+            AssignmentOperator::UnsignedRightShiftAssign => unparser.write_str(">>>="),
+            AssignmentOperator::BitwiseAndAssign => unparser.write_str("&="),
+            AssignmentOperator::BitwiseOrAssign => unparser.write_str("|="),
+            AssignmentOperator::BitwiseXorAssign => unparser.write_str("^="),
+            AssignmentOperator::LogicalAndAssign => unparser.write_str("&&="),
+            AssignmentOperator::LogicalOrAssign => unparser.write_str("||="),
+            AssignmentOperator::NullishCoalescingAssign => unparser.write_str("??="),
+        }
+        unparser.space();
+        
+        // Unparse the right side
+        self.unparse(unparser, &assign.right);
+    }
+    
+    fn unparse_sequence_expression(&self, unparser: &mut Unparser, seq: &SequenceExpression) {
+        for (i, expr) in seq.expressions.iter().enumerate() {
+            if i > 0 {
+                unparser.write_char(',');
+                unparser.space();
+            }
+            self.unparse(unparser, expr);
+        }
+    }
+    
+    // Helper method to determine if parentheses are needed for binary expressions
+    fn needs_parentheses(&self, expr: &Expression, parent_op: &BinaryOperator, is_left: bool) -> bool {
+        match expr {
+            Expression::BinaryExpression(binary) => {
+                let child_precedence = self.get_binary_precedence(&binary.operator);
+                let parent_precedence = self.get_binary_precedence(parent_op);
+                
+                // If the child has lower precedence, we need parentheses
+                if child_precedence < parent_precedence {
+                    return true;
+                }
+                
+                // If they have the same precedence, we need parentheses for right-associative operators
+                // or for the right operand of left-associative operators
+                if child_precedence == parent_precedence {
+                    // Handle right-associative operators (currently only **)
+                    if matches!(parent_op, BinaryOperator::Exponentiation) {
+                        return is_left;
+                    }
+                    // For left-associative operators, need parentheses on right side when precedences are equal
+                    return !is_left;
+                }
+                
+                false
+            },
+            Expression::LogicalExpression(_) |
+            Expression::ConditionalExpression(_) |
+            Expression::AssignmentExpression(_) |
+            Expression::SequenceExpression(_) => true,
+            _ => false,
+        }
+    }
+    
+    // Helper method to determine if parentheses are needed for logical expressions
+    fn needs_logical_parentheses(&self, expr: &Expression, parent_op: &LogicalOperator, is_left: bool) -> bool {
+        match expr {
+            Expression::LogicalExpression(logical) => {
+                let child_precedence = self.get_logical_precedence(&logical.operator);
+                let parent_precedence = self.get_logical_precedence(parent_op);
+                
+                // If the child has lower precedence, we need parentheses
+                if child_precedence < parent_precedence {
+                    return true;
+                }
+                
+                // If they have the same precedence, we need parentheses for the right operand
+                // of left-associative operators (all logical operators are left-associative)
+                if child_precedence == parent_precedence && !is_left {
+                    return true;
+                }
+                
+                false
+            },
+            Expression::ConditionalExpression(_) |
+            Expression::AssignmentExpression(_) |
+            Expression::SequenceExpression(_) => true,
+            _ => false,
+        }
+    }
+    
+    // Helper method to get binary operator precedence
+    fn get_binary_precedence(&self, op: &BinaryOperator) -> u8 {
+        match op {
+            BinaryOperator::Exponentiation => 14,
+            BinaryOperator::Multiplication | BinaryOperator::Division | BinaryOperator::Remainder => 13,
+            BinaryOperator::Addition | BinaryOperator::Subtraction => 12,
+            BinaryOperator::LeftShift | BinaryOperator::RightShift | BinaryOperator::UnsignedRightShift => 11,
+            BinaryOperator::LessThan | BinaryOperator::LessThanOrEqual | 
+            BinaryOperator::GreaterThan | BinaryOperator::GreaterThanOrEqual |
+            BinaryOperator::In | BinaryOperator::InstanceOf => 10,
+            BinaryOperator::Equal | BinaryOperator::NotEqual | 
+            BinaryOperator::StrictEqual | BinaryOperator::StrictNotEqual => 9,
+            BinaryOperator::BitwiseAnd => 8,
+            BinaryOperator::BitwiseXor => 7,
+            BinaryOperator::BitwiseOr => 6,
+            //_ => 0, // Should not happen
+        }
+    }
+    
+    // Helper method to get logical operator precedence
+    fn get_logical_precedence(&self, op: &LogicalOperator) -> u8 {
+        match op {
+            LogicalOperator::And => 5,
+            LogicalOperator::Or => 4,
+            LogicalOperator::NullishCoalescing => 3,
         }
     }
 }

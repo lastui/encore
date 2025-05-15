@@ -1,12 +1,11 @@
 use std::collections::HashSet;
 use crate::lexer::LexicalContext;
 
-/// Maintains parser state and context information
 pub struct ParserContext {
+    // TODO to lexical context
     pub in_strict_mode: bool,
     pub labels: HashSet<Box<str>>,
     pub context_stack: Vec<LexicalContext>,
-    pub comments: Vec<crate::ast::Comment>,
 }
 
 impl ParserContext {
@@ -15,12 +14,7 @@ impl ParserContext {
             in_strict_mode: false,
             labels: HashSet::new(),
             context_stack: vec![LexicalContext::Default],
-            comments: Vec::new(),
         }
-    }
-
-    pub fn current_context(&self) -> &LexicalContext {
-        self.context_stack.last().unwrap_or(&LexicalContext::Default)
     }
 
     pub fn push_context(&mut self, context: LexicalContext) {
@@ -33,23 +27,20 @@ impl ParserContext {
         }
     }
 
-    pub fn has_context<F>(&self, predicate: F) -> bool 
-    where 
-        F: Fn(&LexicalContext) -> bool 
-    {
-        self.context_stack.iter().any(predicate)
+    fn current_context(&self) -> &LexicalContext {
+        self.context_stack.last().unwrap_or(&LexicalContext::Default)
     }
 
     pub fn is_in_loop_body(&self) -> bool {
-        self.has_context(|ctx| matches!(ctx, LexicalContext::LoopBody))
+        matches!(self.current_context(), LexicalContext::LoopBody)
     }
     
     pub fn is_in_switch(&self) -> bool {
-        self.has_context(|ctx| matches!(ctx, LexicalContext::SwitchBody))
+        matches!(self.current_context(), LexicalContext::SwitchBody)
     }
     
     pub fn is_in_function(&self) -> bool {
-        self.has_context(|ctx| matches!(ctx, LexicalContext::FunctionBody { .. }))
+        self.context_stack.iter().any(|ctx| matches!(ctx, LexicalContext::FunctionBody { .. }))
     }
 
     pub fn allows_yield(&self) -> bool {

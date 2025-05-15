@@ -1,44 +1,53 @@
 use crate::ast::*;
 use crate::lexer::*;
 use crate::parser::*;
+use crate::unparser::*;
 use super::expression::*;
 
-pub struct NewExpressionParser;
+pub struct NewExpressionNode;
 
-impl NewExpressionParser {
+impl NewExpressionNode {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl ParserCombinator<NewExpression> for NewExpressionParser {
+impl ParserCombinator<NewExpression> for NewExpressionNode {
     fn parse(&self, parser: &mut Parser) -> ParseResult<NewExpression> {
         parser.assert_consume(&Token::New, "Expected 'new'")?;
-
-        // Parse the callee with appropriate precedence
-        // Use a higher precedence than Call to ensure we don't consume too much
-        let callee = Box::new(ExpressionParser::new().parse_with_precedence(parser, Precedence::Call)?);
-
+        let callee = Box::new(ExpressionNode::new().parse_with_precedence(parser, Precedence::Call)?);
         let mut arguments = Vec::new();
-        
-        // Only parse arguments if there are parentheses
         if parser.check(&Token::LeftParen) {
             parser.assert_consume(&Token::LeftParen, "Expected '(' after new expression")?;
-            
             if !parser.check(&Token::RightParen) {
-                arguments.push(ExpressionParser::new().parse(parser)?);
-
+                arguments.push(ExpressionNode::new().parse(parser)?);
                 while parser.consume(&Token::Comma) && !parser.check(&Token::RightParen) {
-                    arguments.push(ExpressionParser::new().parse(parser)?);
+                    arguments.push(ExpressionNode::new().parse(parser)?);
                 }
             }
-            
             parser.assert_consume(&Token::RightParen, "Expected ')' after new expression arguments")?;
         }
-        
-        Ok(NewExpression {
-            callee,
-            arguments,
-        })
+        Ok(NewExpression { callee, arguments })
+    }
+}
+
+impl UnparserCombinator<Expression> for NewExpressionNode {
+    fn unparse(&self, unparser: &mut Unparser, expr: &Expression) {
+        if let Expression::NewExpression(new_expr) = expr {
+            unparser.write_str("new");
+            unparser.write_char(' ');
+            ExpressionNode::new().unparse(unparser, &new_expr.callee);
+            unparser.write_char('(');
+            if !new_expr.arguments.is_empty() {
+                for (i, arg) in new_expr.arguments.iter().enumerate() {
+                    if i > 0 {
+                        unparser.write_char(',');
+                        unparser.space();
+                    }
+                    ExpressionNode::new().unparse(unparser, arg);
+                }
+            }
+            unparser.write_char(')');
+        }
     }
 }

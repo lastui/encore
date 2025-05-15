@@ -6,6 +6,7 @@ use super::combinator::ParserCombinator;
 use super::context::ParserContext;
 use crate::grammar::*;
 
+/*
 use std::borrow::Cow;
 
 pub struct TokenAccess<'a> {
@@ -18,9 +19,8 @@ impl<'a> std::ops::Deref for TokenAccess<'a> {
     fn deref(&self) -> &Self::Target {
         self.token.as_ref()
     }
-}
+}*/
 
-/// JavaScript parser
 pub struct Parser<'a> {
     stream: TokenStream<'a>,
     context: ParserContext,
@@ -36,19 +36,19 @@ impl<'a> Parser<'a> {
     
     // Main parsing methods
     pub fn parse_module(&mut self) -> ParseResult<Program> {
-        ModuleParser::new().parse(self)
+        ModuleNode::new().parse(self)
     }
     
     pub fn parse_script(&mut self) -> ParseResult<Program> {
-        ScriptParser::new().parse(self)
+        ScriptNode::new().parse(self)
     }
     
     pub fn parse_expression(&mut self) -> ParseResult<Expression> {
-        ExpressionParser::new().parse(self)
+        ExpressionNode::new().parse(self)
     }
     
     pub fn parse_statement(&mut self) -> ParseResult<Statement> {
-        StatementParser::new().parse(self)
+        StatementNode::new().parse(self)
     }
     
     // Source handling
@@ -101,10 +101,6 @@ impl<'a> Parser<'a> {
     pub fn peek_next(&self, offset: usize) -> &Token {
         self.stream.peek_next(offset)
     }
-
-    //pub fn peek_position(&self) -> [usize; 2] {
-      //  self.stream.peek_position()
-    //}
     
     pub fn advance(&mut self) -> bool {
         self.stream.advance()
@@ -141,17 +137,14 @@ impl<'a> Parser<'a> {
             Err(self.error_at_current(message))
         }
     }
-    
+        
+    pub fn get_token_stack_info(&self) -> Vec<String> {
+        self.stream.get_token_stack_info()
+    }
+
     // ParserContext delegations
     pub fn get_context_stack_info(&self) -> Vec<String> {
         self.context.get_context_stack_info()
-    }
-    
-    pub fn has_context<F>(&self, predicate: F) -> bool 
-    where 
-        F: Fn(&LexicalContext) -> bool 
-    {
-        self.context.has_context(predicate)
     }
     
     pub fn is_in_function(&self) -> bool {
@@ -194,6 +187,7 @@ impl<'a> Parser<'a> {
         }
     }
     */
+
     pub fn with_context<F, R>(&mut self, context: LexicalContext, f: F) -> ParseResult<R>
     where
         F: FnOnce(&mut Self) -> ParseResult<R>,

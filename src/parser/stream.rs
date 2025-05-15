@@ -91,4 +91,31 @@ impl<'a> TokenStream<'a> {
     pub fn restore_position(&mut self, position: usize) {
         self.current = position;
     }
+
+    pub fn get_token_stack_info(&self) -> Vec<String> {
+
+        let count = 10;
+
+        let mut history = Vec::with_capacity(count);
+        
+        // Start from the current position and go backwards
+        let start_pos = if self.current >= count - 1 {
+            self.current - (count - 1)
+        } else {
+            0
+        };
+        
+        // Add tokens from start_pos up to and including the current position
+        for i in start_pos..=self.current {
+            if i < self.tokens.len() {
+                history.push(self.tokens[i].0.clone());
+            }
+        }
+        
+        history
+            .iter()
+            .rev()
+            .map(|token| format!("{}", token.to_string()))
+            .collect()
+    }
 }
